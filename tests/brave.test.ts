@@ -100,6 +100,21 @@ describe('brave_web_search results', () => {
     )
   })
 
+  it('redacts the key if Brave echoes it in a result', async () => {
+    fake.replies.push({
+      body: webBody([
+        {
+          title: `Result for ${KEY}`,
+          url: 'https://example.com',
+          description: `token ${KEY}`,
+        },
+      ]),
+    })
+    const text = await brave.web({ query: 'x' })
+    expect(text).toContain('[redacted]')
+    expect(text).not.toContain(KEY)
+  })
+
   it('says when the spelling was corrected', async () => {
     fake.replies.push({
       body: webBody([{ title: 'T', url: 'https://x.test' }], {
@@ -154,6 +169,41 @@ describe('failures', () => {
       expect(message).toContain('BRAVE_API_KEY')
       expect(message).not.toContain(KEY)
     }
+  })
+
+  it('leaves results alone when the key is too short to tell apart from text', async () => {
+    const short = createBrave({ apiKey: 'a', baseUrl: fake.baseUrl })
+    fake.replies.push({
+      body: webBody([
+        { title: 'banana', url: 'https://example.com', description: 'a' },
+      ]),
+    })
+    const text = await short.web({ query: 'x' })
+    expect(text).toContain('banana')
+    expect(text).not.toContain('[redacted]')
+  })
+
+  it('redacts the key if Brave echoes it in an error', async () => {
+    const message = await failure({
+      status: 401,
+      body: { error: { detail: `bad token ${KEY}` } },
+    })
+    expect(message).toContain('[redacted]')
+    expect(message).not.toContain(KEY)
+  })
+
+  it('does not retry or claim a reset time when a 429 has no rate-limit headers', async () => {
+    fake.replies.push(
+      { status: 429, body: { error: { detail: 'slow down' } } },
+      { body: webBody([]) },
+    )
+    const message = await brave.web({ query: 'x' }).then(
+      () => 'no error',
+      (error: Error) => error.message,
+    )
+    expect(message).toContain('rate limit reached.')
+    expect(message).not.toContain('resets in')
+    expect(fake.requests).toHaveLength(1)
   })
 
   it('recognises an invalid key even though Brave answers it with HTTP 422', async () => {

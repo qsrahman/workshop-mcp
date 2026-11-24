@@ -100,6 +100,15 @@ type Result = z.infer<typeof result>
 const clip = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max - 1)}…` : text
 
+// Brave can echo the request's token in an error body or a result; never pass
+// that back to the model, whatever the response says. A key shorter than this
+// is not a real one, and redacting it would mangle ordinary text.
+const MIN_REDACTED_KEY_CHARS = 8
+const redactKey = (text: string, key: string) =>
+  key.length >= MIN_REDACTED_KEY_CHARS
+    ? text.replaceAll(key, '[redacted]')
+    : text
+
 function formatResults(
   searched: string,
   altered: string | undefined,
@@ -137,7 +146,9 @@ function secondsUntilReset(headers: Headers): number | undefined {
   const numbers = (name: string) =>
     (headers.get(name) ?? '')
       .split(',')
-      .map((part) => Number(part.trim()))
+      .map((part) => part.trim())
+      .filter((part) => part !== '')
+      .map(Number)
       .filter((n) => Number.isFinite(n))
   const remaining = numbers('x-ratelimit-remaining')
   const reset = numbers('x-ratelimit-reset')
@@ -146,7 +157,7 @@ function secondsUntilReset(headers: Headers): number | undefined {
 }
 
 /** Turn an HTTP failure into a message an agent can act on. Never includes the key. */
-async function failure(response: Response): Promise<Error> {
+async function failure(response: Response, apiKey: string): Promise<Error> {
   const status = response.status
   let error: {
     code?: string
@@ -160,6 +171,7 @@ async function failure(response: Response): Promise<Error> {
     // an error page, not JSON: the status line is all there is to say
   }
   const detail = error.detail ?? error.message ?? ''
+  const explain = (message: string) => new Error(redactKey(message, apiKey))
 
   // An invalid key is HTTP 422 (SUBSCRIPTION_TOKEN_INVALID), not 401, so go by
   // what the error says it is about as well as by the status.
@@ -170,7 +182,7 @@ async function failure(response: Response): Promise<Error> {
     /TOKEN/.test(error.code ?? '')
   ) {
     const detailMsg = detail ? `: ${clip(detail, MAX_ERROR_DETAIL_CHARS)}` : ''
-    return new Error(
+    return explain(
       `Brave Search rejected the API key (HTTP ${status}${detailMsg}). ` +
         'Check BRAVE_API_KEY, and that the plan allows this search.',
     )
@@ -178,7 +190,7 @@ async function failure(response: Response): Promise<Error> {
   if (status === 429) {
     const wait = secondsUntilReset(response.headers)
     const waitMsg = wait === undefined ? '.' : `; it resets in ${wait} seconds.`
-    return new Error(
+    return explain(
       `Brave Search rate limit reached${waitMsg} Try again later, or make fewer searches.`,
     )
   }
@@ -186,7 +198,7 @@ async function failure(response: Response): Promise<Error> {
   const statusTextPart = statusText ? ` ${statusText}` : ''
   const detailMsg = detail ? `: ${clip(detail, MAX_ERROR_DETAIL_CHARS)}` : ''
   const hintMsg = status === 422 ? ' (check the search parameters).' : '.'
-  return new Error(
+  return explain(
     `Brave Search returned HTTP ${status}${statusTextPart}${detailMsg}${hintMsg}`,
   )
 }
@@ -254,7 +266,7 @@ export function createBrave({
         await sleep(wait * 1000 + 100, undefined, { signal })
         continue
       }
-      throw await failure(response)
+      throw await failure(response, apiKey)
     }
   }
 
@@ -264,10 +276,13 @@ export function createBrave({
       if (!parsed.success)
         throw new Error('Brave Search sent a response in an unexpected format.')
       const body = parsed.data
-      return formatResults(
-        input.query,
-        body.query?.altered,
-        body.web?.results ?? [],
+      return redactKey(
+        formatResults(
+          input.query,
+          body.query?.altered,
+          body.web?.results ?? [],
+        ),
+        apiKey,
       )
     },
   }

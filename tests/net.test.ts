@@ -1,7 +1,15 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import zlib from 'node:zlib'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest'
 import {
   checkedLookup,
   FetchRefusedError,
@@ -105,6 +113,7 @@ describe('the host allowlist', () => {
     '*.',
     'user@example.com',
     'a..b',
+    'a\u0000b', // passes the character check but is not a URL host
     '[example.com]', // brackets belong to IPv6 literals only
     '[example.com',
     'example.com]',
@@ -152,6 +161,8 @@ describe('safeGet', () => {
           .end()
       } else if (url === '/redirect-file') {
         res.writeHead(302, { location: 'file:///etc/passwd' }).end()
+      } else if (url === '/redirect-invalid') {
+        res.writeHead(302, { location: 'http://%' }).end()
       } else if (url === '/loop') {
         res.writeHead(302, { location: '/loop' }).end()
       } else if (url === '/echo') {
@@ -177,6 +188,9 @@ describe('safeGet', () => {
           .end(zlib.gzipSync(Buffer.alloc(MAX_RESPONSE_BYTES + 1_000_000)))
       } else if (url === '/br') {
         res.writeHead(200, { 'content-encoding': 'br' }).end('x')
+      } else if (url === '/br-held') {
+        res.writeHead(200, { 'content-encoding': 'br' })
+        res.write('x') // no end: the client must close the connection itself
       } else if (url === '/declared-big') {
         res.writeHead(200, { 'content-length': String(MAX_RESPONSE_BYTES + 1) })
         res.write('x')
@@ -215,6 +229,12 @@ describe('safeGet', () => {
     promise.then(
       () => 'no error',
       (error: Error) => error.message,
+    )
+  const connections = () =>
+    new Promise<number>((resolve, reject) =>
+      server.getConnections((error, count) =>
+        error ? reject(error) : resolve(count),
+      ),
     )
 
   describe('fetching', () => {
@@ -325,6 +345,18 @@ describe('safeGet', () => {
       )
     })
 
+    it('closes the connection before rejecting a bad encoding or size', async () => {
+      const before = await connections()
+      expect(await failure(get('/br-held'))).toContain(
+        'unsupported content encoding',
+      )
+      expect(await failure(get('/declared-big'))).toContain('byte limit')
+      // the sockets close shortly after the client destroys the response
+      await vi.waitFor(async () => expect(await connections()).toBe(before), {
+        timeout: 2000,
+      })
+    })
+
     it('gives up on a server that never answers, and on one that stalls mid-body', async () => {
       for (const path of ['/silent', '/stalled-body']) {
         const started = Date.now()
@@ -399,6 +431,12 @@ describe('safeGet', () => {
       expect(await failure(get('/redirect-file'))).toContain(
         'Only http:// and https:// URLs',
       )
+    })
+
+    it('refuses a redirect whose Location is not a URL', async () => {
+      const promise = get('/redirect-invalid')
+      expect(await failure(promise)).toContain('redirected to an invalid URL')
+      expect(seen).toEqual(['/redirect-invalid'])
     })
 
     it('can be told to allow private addresses', async () => {

@@ -2,11 +2,13 @@
 // THIRD_PARTY_NOTICES.md for its licence.
 // The edit_file engine: ordered text replacements with a whitespace-tolerant
 // fallback, a git-style diff, and a descriptive error when nothing matches.
-import { isUtf8 } from 'node:buffer'
-import fs from 'node:fs/promises'
 import { FILE_HEADERS_ONLY, createTwoFilesPatch } from 'diff'
 import { z } from 'zod'
-import { normalizeLineEndings, writeFileContent } from './files.js'
+import {
+  normalizeLineEndings,
+  readWholeTextFile,
+  writeFileContent,
+} from './files.js'
 
 // The tool's input schema and the engine's argument type, defined once.
 export const fileEditSchema = z.strictObject({
@@ -349,13 +351,9 @@ export async function applyFileEdits(
   // the resolved real path.
   displayPath = filePath,
 ): Promise<string> {
-  const bytes = await fs.readFile(filePath)
-  const raw = bytes.toString('utf-8')
-  // Decoding replaces invalid bytes with U+FFFD, and writing back would make
-  // that permanent.
-  if (!isUtf8(bytes)) {
-    throw new Error(`Refusing to edit: not valid UTF-8 text: ${filePath}`)
-  }
+  // readWholeTextFile refuses invalid UTF-8 before decoding, so a failed edit
+  // can never turn bad bytes into U+FFFD on a later write.
+  const raw = await readWholeTextFile(filePath)
   if (edits.length === 0) throw new Error('edits must not be empty')
   if (edits.some((edit) => edit.oldText === '')) {
     throw new Error('oldText must not be empty')

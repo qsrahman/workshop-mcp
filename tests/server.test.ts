@@ -263,6 +263,15 @@ describe('what the server advertises to agents', () => {
     },
   )
 
+  it('states the numeric limits of the fetching parameters', async () => {
+    const { tools } = await (await connect(false)).listTools()
+    const schema = tools.find((tool) => tool.name === 'fetch_url')!
+      .inputSchema as Schema
+    expect(schema.properties?.url.description).toContain('2048')
+    expect(schema.properties?.max_length.description).toContain('1-100000')
+    expect(schema.properties?.timeout_ms.description).toContain('1000-120000')
+  })
+
   it('does not announce tool list changes, because the list is fixed', async () => {
     const client = await connect(false, true)
     expect(client.getServerCapabilities()?.tools?.listChanged).toBe(false)

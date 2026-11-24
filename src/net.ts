@@ -316,13 +316,16 @@ async function readBody(
   signal: AbortSignal,
 ): Promise<Buffer> {
   const declared = Number(response.headers['content-length'])
-  if (Number.isFinite(declared) && declared > maxBytes)
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    response.destroy()
     throw new BodyTooLargeError()
+  }
 
   const encoding = String(response.headers['content-encoding'] ?? 'identity')
     .trim()
     .toLowerCase()
   if (!DECODERS.has(encoding)) {
+    response.destroy()
     throw new Error(
       `the server answered with an unsupported content encoding (${encoding}); supported: identity, gzip, x-gzip, deflate`,
     )

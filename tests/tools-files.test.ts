@@ -234,6 +234,17 @@ describe('write_file', () => {
     expect(await fs.readFile(path.join(dir, 'rel/dir/g.ts'), 'utf-8')).toBe('y')
   })
 
+  it("names the caller's path when refusing a directory", async () => {
+    const client = await connect(false)
+    await fs.mkdir(path.join(dir, 'sub'))
+    const message = await callError(client, 'write_file', {
+      path: 'sub',
+      content: 'x',
+    })
+    expect(message).toBe('Refusing to write: sub is not a regular file')
+    expect(message).not.toContain(dir)
+  })
+
   it('creates nothing when the path leaves the allowed directories', async () => {
     const client = await connect(false)
     const outside = await fs.realpath(
@@ -339,6 +350,19 @@ describe('edit_file ambiguity', () => {
       'matches 2 places (lines 1, 3)',
     )
     expect(await fs.readFile(file, 'utf-8')).toBe('a=1\nb=1\na=1\n')
+  })
+
+  it("names the caller's path when refusing a binary file", async () => {
+    const client = await connect(false)
+    await fs.writeFile(path.join(dir, 'blob.bin'), Buffer.from([0xff]))
+    const message = await callError(client, 'edit_file', {
+      path: 'blob.bin',
+      edits: [{ oldText: 'x', newText: 'y' }],
+    })
+    expect(message).toBe(
+      'blob.bin looks like a binary file or is not valid UTF-8 text',
+    )
+    expect(message).not.toContain(dir)
   })
 
   it('replaces every match with replaceAll', async () => {

@@ -49,21 +49,23 @@ export const fetchUrlInput = z.strictObject({
     .string()
     .min(1)
     .max(2048)
-    .describe('The http:// or https:// URL to fetch.'),
+    .describe('The http:// or https:// URL to fetch, at most 2048 characters.'),
   max_length: z
     .number()
     .int()
     .min(1)
     .max(MAX_MAX_LENGTH)
     .optional()
-    .describe(`Most characters to return (default ${DEFAULT_MAX_LENGTH}).`),
+    .describe(
+      `Most characters to return, 1-${MAX_MAX_LENGTH} (default ${DEFAULT_MAX_LENGTH}).`,
+    ),
   start_index: z
     .number()
     .int()
     .min(0)
     .optional()
     .describe(
-      'Character index to continue from when the earlier part was cut off (default 0).',
+      'Character index to continue from when the earlier part was cut off (0 or more, default 0).',
     ),
   raw: z
     .boolean()
@@ -78,7 +80,7 @@ export const fetchUrlInput = z.strictObject({
     .max(120_000)
     .optional()
     .describe(
-      `Wait limit per request, redirects included, in milliseconds (default ${DEFAULT_TIMEOUT_MS}).`,
+      `Wait limit per request, redirects included, in milliseconds, 1000-120000 (default ${DEFAULT_TIMEOUT_MS}).`,
     ),
 })
 
@@ -162,6 +164,7 @@ interface TreeNode {
 }
 
 interface DomElement extends TreeNode {
+  getAttribute(name: string): string | null
   setAttribute(name: string, value: string): void
   prepend(...nodes: TreeNode[]): void
 }
@@ -172,6 +175,7 @@ interface HtmlDocument extends TreeNode {
   body: { innerHTML: string } | null
   title?: string
   createElement(tag: string): DomElement
+  querySelectorAll(selector: string): Iterable<DomElement>
 }
 
 /** True when the tree nests deeper than `limit`; counted without recursion. */
@@ -236,7 +240,19 @@ async function htmlToMarkdown(html: string, pageUrl: string): Promise<string> {
   const title = article?.title?.trim() || pageTitle
   if (!markdown) {
     // Not article-shaped (an index, a landing page): take the whole body instead.
-    markdown = turndown.turndown(parse().body?.innerHTML ?? '').trim()
+    const fallback = parse()
+    // Turndown reads the DOM as it is and ignores a base element, so the links
+    // are made absolute here.
+    for (const anchor of fallback.querySelectorAll('a[href]')) {
+      const href = anchor.getAttribute('href')
+      if (!href) continue
+      try {
+        anchor.setAttribute('href', new URL(href, pageUrl).href)
+      } catch {
+        // Leave an unparseable href as the page wrote it.
+      }
+    }
+    markdown = turndown.turndown(fallback.body?.innerHTML ?? '').trim()
   }
   if (!markdown) {
     throw new FetchFailure(

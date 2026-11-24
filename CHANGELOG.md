@@ -2,6 +2,25 @@
 
 Versions follow [semver](https://semver.org). Each release's notes on GitHub are taken from the matching section here, and a release tag fails to publish without one.
 
+## [Unreleased]
+
+### Fixed
+
+- `brave_web_search`: a 429 answer without rate-limit headers was treated as "resets in 0 seconds" and retried at once. It is now reported as a rate limit with no reset time, and not retried.
+- `fetch_url`: a response that is refused for its declared size or its content encoding now has its connection closed straight away, instead of being left open until the timeout.
+- `fetch_url`: on a page that is not article-shaped, links in the whole-body fallback are now made absolute, as they already were for articles.
+
+### Security
+
+- API key redaction: if Brave echoes the key in a result or an error, it is replaced with `[redacted]` before the model sees it. Keys shorter than 8 characters are not redacted.
+- File reads open the file with `O_NOFOLLOW`, so a symbolic link swapped in after the path was validated is refused (`Refusing to read a symbolic link`).
+
+### Changed
+
+- `edit_file` and `write_file` errors name the path as the caller wrote it: `Refusing to write: sub is not a regular file`, and `blob.bin looks like a binary file or is not valid UTF-8 text`. They used to show the resolved path in a different wording.
+- `edit_file` checks the whole file for invalid UTF-8 and NUL bytes before editing, not only its start, so the rewrite cannot turn stray bytes into U+FFFD. Reading is unchanged: only the first 8 KB is checked, and a stray invalid byte later in a file shows as U+FFFD.
+- The `fetch_url` parameter descriptions state their limits (the URL length, `max_length` 1-100000, `timeout_ms` 1000-120000, `start_index` 0 or more).
+
 ## [0.6.5] - 2026-11-24
 
 ### Changed

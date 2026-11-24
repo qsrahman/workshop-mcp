@@ -167,6 +167,22 @@ describe('filesystem call timeout', () => {
     await vi.advanceTimersByTimeAsync(FS_CALL_TIMEOUT_MS)
     expect(await outcome).toContain('timed out after 15000 ms: realpath')
   })
+
+  it('makes validatePath fail with a timeout when lstat hangs', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(fs, 'realpath').mockRejectedValue(
+      Object.assign(new Error('missing'), { code: 'ENOENT' }),
+    )
+    vi.spyOn(fs, 'lstat').mockReturnValue(new Promise(() => {}) as never)
+    const outcome = validatePath(path.join(root, 'stuck.txt'), [root]).then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    await vi.advanceTimersByTimeAsync(FS_CALL_TIMEOUT_MS)
+    expect(await outcome).toContain(
+      `timed out after ${FS_CALL_TIMEOUT_MS} ms: lstat`,
+    )
+  })
 })
 
 describe('without allowed directories', () => {

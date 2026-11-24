@@ -10,6 +10,9 @@ import { FsTimeoutError, withFsTimeout } from './paths.js'
 
 // File reading constants
 const TAIL_CHUNK_BYTES = 64 * 1024
+const READ_CHUNK_BYTES = 64 * 1024
+// How much of a file is checked before it is read. Reading is lossy and
+// harmless, so a stray invalid byte later on is not a reason to refuse a file.
 const BINARY_SNIFF_BYTES = 8192
 const LF_BYTE = 0x0a // newline character for binary scanning
 
@@ -31,13 +34,15 @@ const ERROR_MESSAGES: Record<string, (shown: string) => string> = {
   ENOTDIR: (shown) => `A parent of ${shown} is not a directory`,
   EACCES: (shown) => `Permission denied: ${shown}`,
   EPERM: (shown) => `Permission denied: ${shown}`,
+  ELOOP: (shown) => `Refusing to read a symbolic link: ${shown}`,
+  ENOTREG: (shown) => `Refusing to write: ${shown} is not a regular file`,
   EBINARY: (shown) =>
     `${shown} looks like a binary file or is not valid UTF-8 text`,
 }
 
 /** An error carrying a Node-style `code`, which friendlyFsError understands. */
-function codedError(code: string): Error {
-  return Object.assign(new Error(code), { code })
+export function codedError(code: string, message = code): Error {
+  return Object.assign(new Error(message), { code })
 }
 
 /**
@@ -53,44 +58,72 @@ export function friendlyFsError(error: unknown, shown: string): Error {
 }
 
 /**
- * Whether the start of a file looks like UTF-8 text: no NUL bytes and valid
- * UTF-8. A start cut off mid-file may end inside a multi-byte character; the
- * decoder in streaming mode treats that as incomplete, not invalid.
- */
-function looksLikeText(start: Buffer, wholeFile: boolean): boolean {
-  if (start.includes(0)) return false
-  try {
-    new TextDecoder('utf-8', { fatal: true }).decode(start, {
-      stream: !wholeFile,
-    })
-    return true
-  } catch {
-    return false
-  }
-}
-
-/**
- * Open a file once for reading, refusing a directory (EISDIR) and a file that
- * does not look like UTF-8 text (EBINARY). The caller reads through the handle,
- * so the file checked is the file read, and closes it.
+ * Open a file once for reading, refusing a directory (EISDIR), a symlink
+ * swapped in after path validation (ELOOP) and a file that does not look like
+ * UTF-8 text (EBINARY): the first `checkBytes` bytes must hold no NUL and be
+ * valid UTF-8. The caller reads through the same handle, so the file checked
+ * is the file read, and closes it.
  */
 async function openTextFile(
   filePath: string,
+  checkBytes = BINARY_SNIFF_BYTES,
 ): Promise<{ handle: FileHandle; size: number }> {
-  const handle = await fs.open(filePath, 'r')
+  const { O_RDONLY, O_NOFOLLOW = 0 } = constants
+  let handle: FileHandle
+  try {
+    handle = await fs.open(filePath, O_RDONLY | O_NOFOLLOW)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
+      throw codedError('ELOOP')
+    }
+    throw error
+  }
   try {
     const stats = await handle.stat()
     // Named here, before any read: reading a directory fails with a less helpful error.
     if (stats.isDirectory()) throw codedError('EISDIR')
-    const sniff = Buffer.alloc(Math.min(BINARY_SNIFF_BYTES, stats.size))
-    await handle.read(sniff, 0, sniff.length, 0) // positional: the file offset stays at 0
-    if (!looksLikeText(sniff, sniff.length === stats.size)) {
-      throw codedError('EBINARY')
+    // A start cut off mid-file may end inside a multi-byte character; the
+    // decoder in streaming mode treats that as incomplete, not invalid. Only a
+    // check that reaches the end of the file may call a truncated one invalid.
+    const end = Math.min(checkBytes, stats.size)
+    const decoder = new TextDecoder('utf-8', { fatal: true })
+    const chunk = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, end))
+    for (let position = 0; position < end;) {
+      const { bytesRead } = await handle.read(
+        chunk,
+        0,
+        Math.min(chunk.length, end - position),
+        position, // positional: the file offset stays at 0
+      )
+      if (bytesRead === 0) break
+      const part = chunk.subarray(0, bytesRead)
+      position += bytesRead
+      try {
+        if (part.includes(0)) throw new Error('NUL byte')
+        decoder.decode(part, { stream: true })
+        if (position >= stats.size) decoder.decode()
+      } catch {
+        throw codedError('EBINARY', 'binary file or not valid UTF-8 text')
+      }
     }
     return { handle, size: stats.size }
   } catch (error) {
     await handle.close()
     throw error
+  }
+}
+
+/**
+ * Read a whole text file for editing. Unlike `readText` it refuses invalid
+ * UTF-8 anywhere in the file, because the text is written back and decoding
+ * would turn those bytes into U+FFFD for good.
+ */
+export async function readWholeTextFile(filePath: string): Promise<string> {
+  const { handle } = await openTextFile(filePath, Infinity)
+  try {
+    return await handle.readFile('utf-8')
+  } finally {
+    await handle.close()
   }
 }
 
@@ -427,7 +460,7 @@ export async function writeFileContent(
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
   }
   if (!(await fs.lstat(filePath)).isFile()) {
-    throw new Error(`Refusing to write: not a regular file: ${filePath}`)
+    throw codedError('ENOTREG', 'not a regular file')
   }
   // Overwrite in place (not rename) to keep the inode, permissions and links.
   const { O_WRONLY, O_TRUNC, O_NOFOLLOW = 0 } = constants

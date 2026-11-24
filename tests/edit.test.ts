@@ -23,6 +23,19 @@ describe('applyFileEdits', () => {
     expect(diff).toContain('-hello world')
   })
 
+  it('refuses a file with invalid UTF-8 anywhere, and leaves its bytes alone', async () => {
+    const f = path.join(root, 'late.txt')
+    const bytes = Buffer.concat([
+      Buffer.from('a\n'.repeat(5000)),
+      Buffer.from([0xff, 0x0a]),
+    ])
+    await fs.writeFile(f, bytes)
+    await expect(
+      applyFileEdits(f, [{ oldText: 'a', newText: 'b' }]),
+    ).rejects.toMatchObject({ code: 'EBINARY' })
+    expect(await fs.readFile(f)).toEqual(bytes)
+  })
+
   it('dryRun does not write; failed match writes nothing', async () => {
     const f = path.join(root, 'e.txt')
     await fs.writeFile(f, 'a\nb\n')
@@ -314,6 +327,15 @@ describe('whitespace-tolerant matching and reindenting', () => {
   it('keeps blank lines in the replacement as given', async () => {
     const out = await edit(file, 'y()', 'y()\n\nq()')
     expect(out).toContain('        y()\n\n')
+  })
+
+  it('keeps blank lines unindented in a whitespace-tolerant replacement', async () => {
+    const out = await edit(
+      file,
+      '  if (x) {\n    y()\n  }',
+      '  if (x) {\n\n      z()\n  }',
+    )
+    expect(out).toBe('function f() {\n    if (x) {\n\n        z()\n    }\n}\n')
   })
 
   it('maps a space-indented edit onto a tab-indented file', async () => {

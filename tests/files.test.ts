@@ -1,12 +1,14 @@
+import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FS_CALL_TIMEOUT_MS } from '../src/paths.js'
+import { FS_CALL_TIMEOUT_MS, validatePath } from '../src/paths.js'
 import {
   friendlyFsError,
   listDirectory,
   readText,
+  readWholeTextFile,
   searchFiles,
   tailFile,
   withFileLock,
@@ -165,12 +167,85 @@ describe('readText', () => {
     await expect(readText(f)).rejects.toMatchObject({ code: 'EBINARY' })
   })
 
-  it('accepts UTF-8 whose multi-byte character straddles the 8 KB sniff boundary', async () => {
+  // Reading is lossy and harmless: a log with one stray byte is still worth
+  // reading. Only writing back (edit_file) needs every byte to be valid.
+  it('reads a file with invalid UTF-8 after the first 8 KB, showing U+FFFD', async () => {
+    const f = path.join(root, 'late.log')
+    await fs.writeFile(
+      f,
+      Buffer.concat([
+        Buffer.alloc(9000, 0x61),
+        Buffer.from([0xe9, 0x0a]),
+        Buffer.from('last line\n'),
+      ]),
+    )
+    expect(await readText(f)).toContain('\uFFFD')
+    expect(await tailFile(f, 1)).toBe('last line')
+  })
+
+  it('refuses invalid UTF-8 anywhere when the whole file is read for editing', async () => {
+    const f = path.join(root, 'late.bin')
+    await fs.writeFile(
+      f,
+      Buffer.concat([Buffer.alloc(9000, 0x61), Buffer.from([0xff, 0xfe])]),
+    )
+    await expect(readWholeTextFile(f)).rejects.toMatchObject({
+      code: 'EBINARY',
+    })
+    const ok = path.join(root, 'ok.txt')
+    await fs.writeFile(ok, 'héllo\n')
+    expect(await readWholeTextFile(ok)).toBe('héllo\n')
+  })
+
+  it('reports a read error as itself, not as a binary file', async () => {
+    const f = await write('io.txt', 'abc')
+    const close = vi.fn(async () => {})
+    const open = vi.spyOn(fs, 'open').mockResolvedValue({
+      stat: async () => ({ isDirectory: () => false, size: 3 }),
+      read: async () => {
+        throw Object.assign(new Error('input/output error'), { code: 'EIO' })
+      },
+      close,
+    } as never)
+    try {
+      await expect(readText(f)).rejects.toMatchObject({ code: 'EIO' })
+      expect(close).toHaveBeenCalled()
+    } finally {
+      open.mockRestore()
+    }
+  })
+
+  it('accepts UTF-8 whose multi-byte character straddles the 8 KB boundary', async () => {
     const f = path.join(root, 'edge.txt')
     await fs.writeFile(f, 'a'.repeat(8191) + 'é€' + 'b'.repeat(500) + '\n')
     const text = await readText(f, { maxChars: 100 })
     expect(text).toContain('a'.repeat(50))
     await expect(readText(f, { offset: 1, limit: 1 })).resolves.toContain('é€')
+  })
+
+  it('does not read through a symlink swapped in after validation', async () => {
+    const victim = path.join(root, 'victim.txt')
+    const secret = path.join(outside, 'secret.txt')
+    await fs.writeFile(victim, 'safe')
+    await fs.writeFile(secret, 'TOP-SECRET')
+    const validated = await validatePath(victim, [root])
+    const original = fs.realpath
+    const swap = vi
+      .spyOn(fs, 'realpath')
+      .mockImplementation((target, ...rest) => {
+        if (String(target) === victim) {
+          fsSync.unlinkSync(victim)
+          fsSync.symlinkSync(secret, victim)
+          return Promise.resolve(validated) as never
+        }
+        return original(target, ...rest) as never
+      })
+    try {
+      await expect(validatePath(victim, [root])).resolves.toBe(validated)
+    } finally {
+      swap.mockRestore()
+    }
+    await expect(readText(validated)).rejects.toMatchObject({ code: 'ELOOP' })
   })
 })
 
@@ -217,6 +292,9 @@ describe('friendlyFsError', () => {
       'not a directory',
     )
     expect(friendlyFsError(code('EACCES'), shown).message).toBe(
+      'Permission denied: src/a.ts',
+    )
+    expect(friendlyFsError(code('EPERM'), shown).message).toBe(
       'Permission denied: src/a.ts',
     )
     expect(friendlyFsError(code('EBINARY'), shown).message).toContain(

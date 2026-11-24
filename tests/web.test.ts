@@ -89,6 +89,13 @@ describe('web fetching', () => {
           'text/html',
           '<html><head><title>App</title></head><body><div id="root"></div><script>render()</script></body></html>',
         )
+      else if (path === '/fallback')
+        send(
+          200,
+          'text/html',
+          '<html><head><title>Links</title></head><body><div style="display:none"><a href="/docs/more">the docs</a></div></body></html>',
+        )
+      else if (path === '/empty-html') send(200, 'text/html', '')
       else if (path === '/deep')
         send(
           200,
@@ -158,6 +165,17 @@ describe('web fetching', () => {
       expect(page.text).not.toContain('About us')
       expect(page.text).not.toContain('Copyright footer')
       expect(page.prefix).toBe('')
+    })
+
+    it('makes links absolute on the whole-body fallback too', async () => {
+      const page = await fetcher().fetch(`${base}/fallback`)
+      expect(page.text).toContain(`[the docs](${base}/docs/more)`)
+    })
+
+    it('explains HTML with no document element', async () => {
+      expect(await failure(fetcher().fetch(`${base}/empty-html`))).toContain(
+        'does not look like an HTML page',
+      )
     })
 
     it('puts the page title first when the content does not open with it', async () => {
