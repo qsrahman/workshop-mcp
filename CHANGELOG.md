@@ -2,6 +2,13 @@
 
 Versions follow [semver](https://semver.org). Each release's notes on GitHub are taken from the matching section here, and a release tag fails to publish without one.
 
+## [0.6.5] - 2026-11-24
+
+### Changed
+
+- `brave_web_search`: when Brave answers with an error, the detail it gave is shown up to 300 characters in every case. A rejected API key used to show only 200.
+- Internal simplifications with no other change in behaviour.
+
 ## [0.6.4] - 2026-11-24
 
 ### Changed
