@@ -99,6 +99,42 @@ describe('the built server process', () => {
       timeout: 15_000,
     })
 
+  // The line the server writes to stderr when it starts. Stdin is closed at
+  // once, so the process ends after printing it.
+  const status = (args: string[], env: Record<string, string> = {}) =>
+    spawnSync(process.execPath, [entry, ...args], {
+      encoding: 'utf-8',
+      input: '',
+      timeout: 15_000,
+      env: { ...process.env, BRAVE_API_KEY: '', ...env },
+    }).stderr.trim()
+
+  it('says on stderr what it started with', () => {
+    expect(status([])).toBe(
+      'workshop-mcp running on stdio. File access is not restricted.',
+    )
+    expect(status(['--read-only'])).toContain(
+      'running on stdio (read-only). File access',
+    )
+    expect(status(['--no-shell'])).toContain(
+      'running on stdio (shell disabled). File access',
+    )
+    expect(status(['--no-fetch'])).toContain(
+      'running on stdio (fetch disabled). File access',
+    )
+    expect(status(['--no-shell', '--no-fetch'])).toContain(
+      'running on stdio (shell disabled) (fetch disabled). File access',
+    )
+    expect(status([], { BRAVE_API_KEY: 'k' })).toContain(
+      'running on stdio (web search on). File access',
+    )
+    // --read-only wins over --no-shell, since it is the stricter mode
+    expect(status(['--read-only', '--no-shell'])).toContain(
+      'running on stdio (read-only).',
+    )
+    expect(status([root])).toMatch(/running on stdio\. Allowed: .*\S/)
+  })
+
   it('exits with status 1 and the usage for an unknown option', () => {
     const run = exits(['--readonly'])
     expect(run.status).toBe(1)
