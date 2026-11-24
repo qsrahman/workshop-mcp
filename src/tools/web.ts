@@ -80,7 +80,7 @@ export function registerSearchTools(
       title: 'Brave Web Search',
       description:
         'Search the web with Brave Search; returns the top results with title, URL, age and description, not the pages themselves' +
-        (fetchAvailable ? ' (read one with fetch_url). ' : '. ') +
+        (fetchAvailable ? ' (read one with the URL-fetching tool). ' : '. ') +
         'Use it for current information, facts, documentation and anything not in the files. ' +
         UNTRUSTED_RESULTS,
       inputSchema: webSearchInput,

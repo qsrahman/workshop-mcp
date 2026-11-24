@@ -25,7 +25,7 @@ interface CommandResult {
 function outputText(raw: string): string {
   const text = stripVTControlCharacters(raw)
   if (text.includes('\0')) {
-    return `[binary output omitted: ${text.length} characters containing NUL bytes; inspect it with shell, for example: file <path> or xxd <path> | head]`
+    return `[binary output omitted: ${text.length} characters containing NUL bytes; inspect it with a command such as: file <path> or xxd <path> | head]`
   }
   if (text.length <= MAX_OUTPUT_CHARS) return text
   return `${text.slice(0, HALF)}\n[... ${text.length - MAX_OUTPUT_CHARS} characters omitted; narrow the command to see the rest ...]\n${text.slice(-HALF)}`

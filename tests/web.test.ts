@@ -308,7 +308,7 @@ describe('web fetching', () => {
     it('shows where to continue when more remains', () => {
       const out = paginate(page, 0, 30)
       expect(out).toBe(
-        `Contents of https://x.test/a:\n${page.text.slice(0, 30)}\n\n[... showing characters 0-30 of 100; more follows. Continue with fetch_url start_index=30]`,
+        `Contents of https://x.test/a:\n${page.text.slice(0, 30)}\n\n[... showing characters 0-30 of 100; more follows. Continue with start_index=30]`,
       )
     })
 

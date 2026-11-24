@@ -75,7 +75,7 @@ describe('readText', () => {
   it('reads a range with offset and limit', async () => {
     const f = await write('range.txt', lines(10).join('\n') + '\n')
     expect(await readText(f, { offset: 3, limit: 2 })).toMatch(
-      /^line 3\nline 4\n\[\.\.\. showing lines 3-4; more lines follow\. Continue with read_file offset=5\]$/,
+      /^line 3\nline 4\n\[\.\.\. showing lines 3-4; more lines follow\. Continue by reading this file with offset=5\]$/,
     )
     expect(await readText(f, { offset: 9 })).toBe('line 9\nline 10')
     expect(await readText(f, { offset: 11 })).toContain(
@@ -95,7 +95,7 @@ describe('readText', () => {
     const f = await write('long.txt', lines(5000).join('\n') + '\n')
     const text = await readText(f, { maxChars: 1000 })
     const note = text.match(
-      /\[\.\.\. showing lines 1-(\d+); more lines follow\. Continue with read_file offset=(\d+)\]$/,
+      /\[\.\.\. showing lines 1-(\d+); more lines follow\. Continue by reading this file with offset=(\d+)\]$/,
     )
     expect(note).not.toBeNull()
     expect(Number(note![2])).toBe(Number(note![1]) + 1)
@@ -115,7 +115,7 @@ describe('readText', () => {
     const text = await readText(f, { maxChars: 100 })
     expect(text.startsWith('x'.repeat(100))).toBe(true)
     expect(text).toContain('line cut: it has 5000 characters')
-    expect(text).toContain('Continue with read_file offset=2')
+    expect(text).toContain('Continue by reading this file with offset=2')
   })
 
   it('reads a file far past the old whole-file limit by the first part', async () => {
@@ -419,9 +419,7 @@ describe('listDirectory', () => {
     const asFile = await listDirectory(path.join(root, 'f.txt'), false).catch(
       (error: unknown) => friendlyFsError(error, 'f.txt').message,
     )
-    expect(asFile).toBe(
-      'f.txt is a file, not a directory; read it with read_file',
-    )
+    expect(asFile).toBe('f.txt is a file, not a directory; read it as a file')
     const missing = await listDirectory(path.join(root, 'nope'), false).catch(
       (error: unknown) => friendlyFsError(error, 'nope').message,
     )
@@ -566,8 +564,6 @@ describe('searchFiles', () => {
     const message = await searchFiles(path.join(root, 'f.txt'), '*').catch(
       (error: unknown) => friendlyFsError(error, 'f.txt').message,
     )
-    expect(message).toBe(
-      'f.txt is a file, not a directory; read it with read_file',
-    )
+    expect(message).toBe('f.txt is a file, not a directory; read it as a file')
   })
 })

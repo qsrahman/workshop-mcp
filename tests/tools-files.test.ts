@@ -50,7 +50,7 @@ describe('read_multiple_files budget', () => {
     })
     const text = (result.content as Array<{ text: string }>)[0].text
     expect(text).toContain('note.txt:\noriginal')
-    expect(text).toContain('Continue with read_file offset=')
+    expect(text).toContain('Continue by reading this file with offset=')
     expect(text.length).toBeLessThan(200_500)
   })
 })
@@ -71,7 +71,7 @@ describe('read_multiple_files, once the budget is used up', () => {
     })
     const text = (result.content as Array<{ text: string }>)[0].text
     expect(text).toContain(
-      `${path.join(dir, 'note.txt')}: Skipped - the size limit for this call was reached; read it with read_file`,
+      `${path.join(dir, 'note.txt')}: Skipped - the size limit for this call was reached; read it on its own`,
     )
     expect(text).not.toContain('original')
   })
@@ -125,7 +125,7 @@ describe('list_directory', () => {
     const file = await list({ path: 'note.txt' })
     expect(file.isError).toBe(true)
     expect(file.text).toBe(
-      'note.txt is a file, not a directory; read it with read_file',
+      'note.txt is a file, not a directory; read it as a file',
     )
     expect((await list({ path: 'nope' })).isError).toBe(true)
   })
@@ -279,7 +279,7 @@ describe('read_file for agents', () => {
       limit: 3,
     })
     expect(text).toMatch(
-      /^l4\nl5\nl6\n\[\.\.\. showing lines 4-6; more lines follow\. Continue with read_file offset=7\]$/,
+      /^l4\nl5\nl6\n\[\.\.\. showing lines 4-6; more lines follow\. Continue by reading this file with offset=7\]$/,
     )
   })
 
@@ -291,7 +291,7 @@ describe('read_file for agents', () => {
     ) // 400,000 chars
     const { text } = await read(client, { path: path.join(dir, 'long.txt') })
     expect(text.length).toBeLessThan(101_000)
-    expect(text).toMatch(/Continue with read_file offset=\d+\]$/)
+    expect(text).toMatch(/Continue by reading this file with offset=\d+\]$/)
   })
 
   it('rejects combining head, tail and offset/limit', async () => {

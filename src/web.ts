@@ -351,7 +351,7 @@ export function createWebFetcher(options: WebFetcherOptions) {
     const mime = contentType.split(';')[0].trim().toLowerCase()
     if (!isTextual(mime, response.body)) {
       throw new FetchFailure(
-        `${finalUrl} is ${mime ? `a ${mime} file` : 'binary content'}, not text; fetch_url returns text only`,
+        `${finalUrl} is ${mime ? `a ${mime} file` : 'binary content'}, not text; this tool returns text only`,
       )
     }
     const text = decodeBody(contentType, response.body)
@@ -443,6 +443,6 @@ export function paginate(
   const end = Math.min(startIndex + maxLength, length)
   const slice = page.text.slice(startIndex, end)
   return end < length
-    ? `${head}${slice}\n\n[... showing characters ${startIndex}-${end} of ${length}; more follows. Continue with fetch_url start_index=${end}]`
+    ? `${head}${slice}\n\n[... showing characters ${startIndex}-${end} of ${length}; more follows. Continue with start_index=${end}]`
     : `${head}${slice}`
 }

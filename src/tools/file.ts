@@ -117,10 +117,10 @@ export function registerFileTools(
     {
       title: 'Read Multiple Files',
       description:
-        'Read several files in one call, instead of repeated read_file calls; each ' +
+        'Read several files in one call, instead of reading them one at a time; each ' +
         'is returned under its path, and a failed read does not stop the others. Output is capped at about 200,000 characters ' +
         'in total: a file that does not fit is cut, with the offset to continue ' +
-        'from with read_file.' +
+        'from when you read it on its own.' +
         onlyWithin,
       inputSchema: z.strictObject({
         paths: z
@@ -139,7 +139,7 @@ export function registerFileTools(
       for (const filePath of args.paths) {
         if (remaining <= 0) {
           results.push(
-            `${filePath}: Skipped - the size limit for this call was reached; read it with read_file`,
+            `${filePath}: Skipped - the size limit for this call was reached; read it on its own`,
           )
           continue
         }
@@ -170,7 +170,7 @@ export function registerFileTools(
           'relative to the directory; .git and node_modules are listed but not ' +
           'entered. At most 1000 entries; the result says when it stopped, so ' +
           'list a subdirectory for the rest. To find a file by name anywhere ' +
-          'below a directory, use search_files.' +
+          'below a directory, use the file-search tool.' +
           onlyWithin,
         inputSchema: z.strictObject({
           path: pathParam,
@@ -202,7 +202,7 @@ export function registerFileTools(
           'Returns matching paths relative to `path`, one per line, directories ' +
           'ending in /. .git and node_modules are not entered (a directory with ' +
           'that name can still match). At most 1000 matches; the result says ' +
-          'when it stopped. To browse a single folder, use list_directory.' +
+          'when it stopped. To browse a single folder, use the directory-listing tool.' +
           onlyWithin,
         inputSchema: z.strictObject({
           path: pathParam,
@@ -241,7 +241,7 @@ export function registerFileTools(
       description:
         'Create a file or completely overwrite one, creating missing parent ' +
         'directories. Overwrites without warning; to change part of a file use ' +
-        'edit_file.' +
+        'the edit tool.' +
         onlyWithin,
       inputSchema: z.strictObject({
         path: pathParam,

@@ -27,8 +27,7 @@ export const normalizeLineEndings = (text: string) =>
 const ERROR_MESSAGES: Record<string, (shown: string) => string> = {
   ENOENT: (shown) => `File not found: ${shown}`,
   EISDIR: (shown) => `${shown} is a directory, not a file`,
-  ENOTADIR: (shown) =>
-    `${shown} is a file, not a directory; read it with read_file`,
+  ENOTADIR: (shown) => `${shown} is a file, not a directory; read it as a file`,
   ENOTDIR: (shown) => `A parent of ${shown} is not a directory`,
   EACCES: (shown) => `Permission denied: ${shown}`,
   EPERM: (shown) => `Permission denied: ${shown}`,
@@ -178,7 +177,7 @@ export async function readText(
     const text = lines.join('\n')
     return nextOffset === undefined
       ? text
-      : `${text}\n[... showing lines ${offset}-${nextOffset - 1}; more lines follow. Continue with read_file offset=${nextOffset}]`
+      : `${text}\n[... showing lines ${offset}-${nextOffset - 1}; more lines follow. Continue by reading this file with offset=${nextOffset}]`
   } finally {
     await handle.close()
   }
