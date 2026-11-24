@@ -20,8 +20,7 @@ const MAX_RETRY_WAIT_SECONDS = 5
 // Text clipping limits for result display and error messages.
 const MAX_TITLE_CHARS = 200
 const MAX_DESCRIPTION_CHARS = 500
-const MAX_ERROR_DETAIL_CHARS = 200
-const MAX_ERROR_STATUS_DETAIL_CHARS = 300
+const MAX_ERROR_DETAIL_CHARS = 300
 
 // Regex patterns for input validation in Zod schemas.
 const FRESHNESS_REGEX = /^(pd|pw|pm|py|\d{4}-\d{2}-\d{2}to\d{4}-\d{2}-\d{2})$/
@@ -185,9 +184,7 @@ async function failure(response: Response): Promise<Error> {
   }
   const statusText = response.statusText ?? ''
   const statusTextPart = statusText ? ` ${statusText}` : ''
-  const detailMsg = detail
-    ? `: ${clip(detail, MAX_ERROR_STATUS_DETAIL_CHARS)}`
-    : ''
+  const detailMsg = detail ? `: ${clip(detail, MAX_ERROR_DETAIL_CHARS)}` : ''
   const hintMsg = status === 422 ? ' (check the search parameters).' : '.'
   return new Error(
     `Brave Search returned HTTP ${status}${statusTextPart}${detailMsg}${hintMsg}`,

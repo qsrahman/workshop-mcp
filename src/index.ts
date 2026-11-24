@@ -9,14 +9,6 @@ import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import { normalizeAllowedHost } from './net.js'
 import { createServer } from './server.js'
 
-function parseAllowedHosts(hostLists: string[]): string[] | undefined {
-  const normalized = hostLists
-    .flatMap((list) => list.split(','))
-    .filter((entry) => entry.trim() !== '')
-    .map(normalizeAllowedHost)
-  return normalized.length > 0 ? normalized : undefined
-}
-
 /**
  * Keeps both the given and the realpath'd spelling (e.g. macOS /var and
  * /private/var), so a path under either is accepted; validatePath still
@@ -55,7 +47,10 @@ export function parseArgs(args: string[]) {
       'allowed-hosts': { type: 'string', multiple: true },
     },
   })
-  const allowedHosts = parseAllowedHosts(values['allowed-hosts'] ?? [])
+  const allowedHosts = (values['allowed-hosts'] ?? [])
+    .flatMap((list) => list.split(','))
+    .filter((entry) => entry.trim() !== '')
+    .map(normalizeAllowedHost)
   return {
     directories: positionals,
     readOnly: values['read-only'],
@@ -65,7 +60,7 @@ export function parseArgs(args: string[]) {
       : {
           allowPrivateIps: values['allow-private-ips'],
           ignoreRobotsTxt: values['ignore-robots-txt'],
-          allowedHosts,
+          allowedHosts: allowedHosts.length > 0 ? allowedHosts : undefined,
         },
   }
 }
@@ -100,19 +95,15 @@ export async function resolveConfig(argv: string[], env: NodeJS.ProcessEnv) {
   return { allowedDirs, readOnly, shell, fetch, brave }
 }
 
-function buildStatusMessage(
-  readOnly: boolean,
-  shell: boolean,
-  fetch:
-    | boolean
-    | {
-        allowPrivateIps: boolean
-        ignoreRobotsTxt: boolean
-        allowedHosts?: string[]
-      },
-  brave: { apiKey: string } | undefined,
-  allowedDirs: string[] | null,
-): string {
+type Config = Awaited<ReturnType<typeof resolveConfig>>
+
+function buildStatusMessage({
+  allowedDirs,
+  readOnly,
+  shell,
+  fetch,
+  brave,
+}: Config): string {
   const mode = readOnly ? ' (read-only)' : shell ? '' : ' (shell disabled)'
   const fetchStatus = fetch ? '' : ' (fetch disabled)'
   const braveStatus = brave ? ' (web search on)' : ''
@@ -123,7 +114,7 @@ function buildStatusMessage(
 }
 
 async function main() {
-  let config: Awaited<ReturnType<typeof resolveConfig>>
+  let config: Config
   try {
     config = await resolveConfig(process.argv.slice(2), process.env)
   } catch (error) {
@@ -141,7 +132,7 @@ async function main() {
       },
     },
   )
-  console.error(buildStatusMessage(readOnly, shell, fetch, brave, allowedDirs))
+  console.error(buildStatusMessage(config))
 }
 
 // Run only as the entry point (npm links the bin via a symlink, hence realpath),

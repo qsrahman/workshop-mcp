@@ -359,8 +359,8 @@ async function readBody(
 /** Check a URL against the policy that does not need the network. */
 function checkUrl(
   url: URL,
-  options: SafeGetOptions,
   permit: (address: string) => boolean,
+  allowedHosts: readonly string[] | undefined,
 ) {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new FetchRefusedError(
@@ -373,10 +373,7 @@ function checkUrl(
     )
   }
   const host = normalizeHostname(url.hostname)
-  if (
-    options.allowedHosts &&
-    !hostIsAllowed(url.hostname, options.allowedHosts)
-  ) {
+  if (allowedHosts && !hostIsAllowed(url.hostname, allowedHosts)) {
     throw new FetchRefusedError(
       `${host} is not one of the hosts this server is allowed to fetch from (--allowed-hosts)`,
     )
@@ -417,7 +414,7 @@ export async function safeGet(
 
   try {
     for (let hop = 0; ; hop++) {
-      checkUrl(url, options, permit)
+      checkUrl(url, permit, options.allowedHosts)
       await options.beforeRequest?.(url)
       const response = await requestOnce(url, headers, permit, signal)
       const status = response.statusCode ?? 0
