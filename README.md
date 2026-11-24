@@ -6,8 +6,6 @@ A small [Model Context Protocol](https://modelcontextprotocol.io) server that gi
 
 > **Formerly `@qsrahman/fs-mcp-server`.** That name described only the file tools; the package was renamed when the web tools arrived. The old package is deprecated and stays at 0.2.0. To switch, replace `@qsrahman/fs-mcp-server` with `@qsrahman/workshop-mcp` in your client configuration; the command it installs is now `workshop-mcp`.
 
-The file tools are ported, in trimmed form, from the reference [filesystem server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem), and the optional web search tools from the [Brave Search MCP server](https://github.com/brave/brave-search-mcp-server). See [License](#license).
-
 ## Tools
 
 | Tool                  | What it does                                                                                                                                                                                                                                                                                                                        |
@@ -36,15 +34,14 @@ The server sends MCP `instructions` when a client connects: whether file access 
 - **Private and local addresses are refused**: loopback (`localhost`, `127.0.0.1`), private ranges, link-local and cloud metadata addresses such as `169.254.169.254`, however they are spelled, and after every redirect. The check is made at the moment of connecting, so a host name cannot answer differently the second time. Fetching your own dev server needs `--allow-private-ips`.
 - `--allowed-hosts example.com,*.docs.example.org` limits fetching to those hosts (an exact host, or `*.domain` for any subdomain but not the domain itself), for every request including `robots.txt` and redirects.
 - Responses are read up to 5 MiB (counted after decompression), with a 30 second default timeout per request, and at most 10 redirects. Only the first 1.5 million characters of a very large HTML page are converted, because conversion runs on the server's main thread.
-- The content is untrusted text from third parties. The tool description and server instructions tell the model to use it as information, never as instructions, and to cite the URL, but see Security model.
+- The content is untrusted text from third parties; see [Security model](#security-model).
 
 ### Web search (optional)
 
-`brave_web_search` searches the web through the [Brave Search API](https://brave.com/search/api/). They are offered only when the `BRAVE_API_KEY` environment variable is set, so without a key nothing changes. Create a key in the [Brave Search API dashboard](https://api-dashboard.search.brave.com/app/keys) and give it to the server through your client's `env` setting (examples below), not on the command line, where it would show in process listings.
+`brave_web_search` searches the web through the [Brave Search API](https://brave.com/search/api/). It is offered only when the `BRAVE_API_KEY` environment variable is set, so without a key nothing changes. Create a key in the [Brave Search API dashboard](https://api-dashboard.search.brave.com/app/keys) and give it to the server through your client's `env` setting (examples below), not on the command line, where it would show in process listings.
 
 - It takes a `query` and, optionally, `count`, `offset` (pages), `freshness` (`pd`, `pw`, `pm`, `py`, or a date range), `country`, `search_lang` and `safesearch`. Results come back as a short numbered list to keep them cheap in tokens. Snippets are requested without highlight markup.
-- The results are third-party web text. The tool descriptions and server instructions tell the model to treat them as information, never as instructions, and to cite URLs, but a prompt injection in a page remains a risk while the shell and file-writing tools are on. If that matters, start the server with `--no-shell` or `--read-only`. Searching changes nothing locally, so `--read-only` keeps this tool.
-- The key is removed from the environment of the `shell` tool, so commands the model runs cannot print it. With the default unrestricted file access, though, the model can read any file you can, including a client config file that contains the key. List directories and use `--no-shell` if the key must stay out of reach (see Security model).
+- The results are untrusted third-party text, and the key needs care; see [Security model](#security-model).
 - Brave's free plan allows about one request per second. A rate-limit answer that resets within five seconds is waited out and retried once; a longer one, such as a used-up monthly quota, is reported as an error that says when it resets. Your search queries go to Brave.
 
 ### Edit behaviour
@@ -87,11 +84,13 @@ With or without directories, `write_file` creates files exclusively and never wr
 
 `fetch_url` can request any public URL, which makes it a way for data to leave the machine: a page the model reads may carry hidden instructions telling it to read a file and put the contents in a URL it then fetches. The server cannot tell such a request from a legitimate one. The protections are the ones that limit what the model can do or reach: `--allowed-hosts` (the strongest, since an unlisted host is never contacted), `--no-fetch`, and keeping private data out of reach with directories and `--no-shell`. Note that `--read-only` does not turn fetching off, because a fetch changes nothing on this machine.
 
-Separately, the address check keeps `fetch_url` from being used against services on your own machine or network (the classic server-side request forgery): see Fetching web pages above. It does not defend against a malicious page, only against being aimed inward.
+Separately, the address check keeps `fetch_url` from being used against services on your own machine or network (the classic server-side request forgery): see Fetching web pages under Tools. It does not defend against a malicious page, only against being aimed inward.
 
 ### Web search
 
-The two search tools send queries to Brave and return web text the model then reads. The text is untrusted, so a page can try to steer the model. The server tells the model not to follow it, which is a mitigation, not a boundary; what limits the damage is what the model is allowed to do next (`--no-shell`, `--read-only`, directories). The API key is held only in the server's memory and the `X-Subscription-Token` header of the request to Brave; it is never returned by a tool and is removed from the shell's environment.
+`brave_web_search` sends queries to Brave and returns web text the model then reads. The text is untrusted, so a page can try to steer the model. The server tells the model not to follow it, which is a mitigation, not a boundary; what limits the damage is what the model is allowed to do next (`--no-shell`, `--read-only`, directories). Searching changes nothing locally, so `--read-only` keeps this tool.
+
+The API key is held only in the server's memory and the `X-Subscription-Token` header of the request to Brave; it is never returned by a tool and is removed from the shell's environment. With unrestricted file access, though, the model can read any file you can, including a client config file that contains the key: list directories and use `--no-shell` if the key must stay out of reach.
 
 ### Shell tool
 
@@ -107,58 +106,48 @@ Path resolution (`realpath`, `lstat`) gives up after 15 seconds with a message n
 
 Requires Node.js 22 or newer.
 
-### With npx
-
-Install nothing; npx fetches the [published package](https://www.npmjs.com/package/@qsrahman/workshop-mcp) on first use and caches it:
-
 ```bash
-npx -y @qsrahman/workshop-mcp [--read-only] [--no-shell] [/path/to/dir ...]
+npx -y @qsrahman/workshop-mcp [options] [/path/to/dir ...]
 ```
 
-Other ways to run it: build from source (below), or install straight from GitHub with `npx -y github:qsrahman/workshop-mcp`. A git install builds the package with its `prepare` script, which npm skips if `ignore-scripts` is set in your npm config. To try a local build, run `pnpm pack` and then `npx -y --package ./qsrahman-workshop-mcp-0.3.0.tgz workshop-mcp`.
+npx fetches the [published package](https://www.npmjs.com/package/@qsrahman/workshop-mcp) on first use and caches it. Other ways to run it:
 
-### From source
-
-Requires [pnpm](https://pnpm.io).
-
-```bash
-pnpm install
-pnpm build
-node dist/index.js [--read-only] [--no-shell] [/path/to/dir ...]
-```
+- From GitHub: `npx -y github:qsrahman/workshop-mcp`. A git install builds the package with its `prepare` script, which npm skips if `ignore-scripts` is set in your npm config.
+- From source (needs [pnpm](https://pnpm.io)): `pnpm install && pnpm build`, then `node dist/index.js [options] [dir ...]`.
+- A local build as a package: `pnpm pack`, then `npx -y --package ./qsrahman-workshop-mcp-*.tgz workshop-mcp`.
 
 ### Options
 
-| Option                | Effect                                                                                                                                                |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--no-shell`          | Do not serve the `shell` tool. It is on by default.                                                                                                   |
-| `--read-only`         | Serve only `read_file` and `read_multiple_files` (tools annotated `readOnlyHint: true`). Writing, editing and the shell are absent from `tools/list`. |
-| `--no-fetch`          | Do not serve `fetch_url`. It is on by default.                                                                                                        |
-| `--allow-private-ips` | Let `fetch_url` reach private, loopback and link-local addresses (a local dev server). Refused by default.                                            |
-| `--ignore-robots-txt` | Do not consult `robots.txt` before fetching a page.                                                                                                   |
-| `--allowed-hosts`     | Limit `fetch_url` to these hosts: a comma-separated list (or repeat the option) of exact hosts and `*.domain` entries.                                |
-| `<directory> ...`     | Optional. Limit the file tools to these directories (and the shell's starting directory). Use absolute paths. With none, nothing is limited.          |
-| `--`                  | Ends the options, so a directory that starts with `--` can follow.                                                                                    |
+| Option                | Effect                                                                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--no-shell`          | Do not serve the `shell` tool. It is on by default.                                                                                          |
+| `--read-only`         | Serve only tools annotated `readOnlyHint: true`: the read tools, `fetch_url` and `brave_web_search`. Writing, editing and the shell are absent. |
+| `--no-fetch`          | Do not serve `fetch_url`. It is on by default.                                                                                               |
+| `--allow-private-ips` | Let `fetch_url` reach private, loopback and link-local addresses (a local dev server). Refused by default.                                   |
+| `--ignore-robots-txt` | Do not consult `robots.txt` before fetching a page.                                                                                          |
+| `--allowed-hosts`     | Limit `fetch_url` to these hosts: a comma-separated list (or repeat the option) of exact hosts and `*.domain` entries.                       |
+| `<directory> ...`     | Optional. Limit the file tools to these directories (and the shell's starting directory). Use absolute paths. With none, nothing is limited. |
+| `--`                  | Ends the options, so a directory that starts with `--` can follow.                                                                           |
 
 An unrecognised option is an error and the server exits (a mistyped `--read-only` or `--no-shell` would otherwise start it with more access than you asked for). A listed directory that does not exist is skipped with a warning; if every listed directory is unusable the server exits, it does not become unrestricted.
 
 ### Connect a client
 
-Every client below starts the server as a subprocess over stdio. The examples below are unrestricted with the shell on, which is the default. Add `--no-shell` or `--read-only` after the package name to take access away, and absolute directories after it to limit the file tools (see [Security model](#security-model)).
+Every client starts the server as a subprocess over stdio. The examples are unrestricted with the shell on, which is the default. Add `--no-shell` or `--read-only` after the package name to take access away, and absolute directories after it to limit the file tools (see [Security model](#security-model)).
 
-#### Claude Code
+**Claude Code:**
 
 ```bash
 claude mcp add workshop -- npx -y @qsrahman/workshop-mcp
 ```
 
-Everything after `--` is the server command, so server options go there too. The default scope is just you in the current project; add `--scope project` before the name to write a shareable `.mcp.json`, or `--scope user` to use it in every project:
+Everything after `--` is the server command, so server options go there too. The default scope is just you in the current project; add `--scope project` before the name to write a shareable `.mcp.json` (Claude Code asks you to approve a project server before using it), or `--scope user` to use it in every project:
 
 ```bash
 claude mcp add --scope project workshop -- npx -y @qsrahman/workshop-mcp --no-shell /path/to/project
 ```
 
-A project's `.mcp.json` looks like this (Claude Code asks you to approve a project server before using it):
+**Other clients** take the same entry in their MCP configuration file:
 
 ```json
 {
@@ -171,60 +160,15 @@ A project's `.mcp.json` looks like this (Claude Code asks you to approve a proje
 }
 ```
 
-#### Claude Desktop
+| Client         | Configuration file                                                                                                                                                | Differences                                                       |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows `%APPDATA%\Claude\claude_desktop_config.json`, Linux `~/.config/Claude/claude_desktop_config.json` | Settings → Developer → Edit Config opens it. Quit and restart the app completely after saving. |
+| Cursor         | `.cursor/mcp.json` (one project) or `~/.cursor/mcp.json` (everywhere)                                                                                             | Add `"type": "stdio"` to the entry.                               |
+| VS Code        | `.vscode/mcp.json` in the workspace, or your user profile's `mcp.json`                                                                                            | The top-level key is `servers`, not `mcpServers`, and `"type": "stdio"` is required. |
 
-Open **Settings → Developer → Edit Config** (from the Claude menu in the menu bar), or edit the file directly:
+Claude Desktop writes the server's stderr (including the startup line that says whether file access is restricted) to `~/Library/Logs/Claude/mcp-server-workshop.log` on macOS, `%APPDATA%\Claude\logs` on Windows and `~/.config/Claude/logs` on Linux.
 
-| OS      | File                                                              |
-| ------- | ----------------------------------------------------------------- |
-| macOS   | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Windows | `%APPDATA%\Claude\claude_desktop_config.json`                    |
-| Linux   | `~/.config/Claude/claude_desktop_config.json`                     |
-
-```json
-{
-  "mcpServers": {
-    "workshop": {
-      "command": "npx",
-      "args": ["-y", "@qsrahman/workshop-mcp"]
-    }
-  }
-}
-```
-
-Quit and restart Claude Desktop completely after saving. The server's stderr (including the line it prints at startup that says whether file access is restricted) goes to `~/Library/Logs/Claude/mcp-server-workshop.log` on macOS, `%APPDATA%\Claude\logs` on Windows and `~/.config/Claude/logs` on Linux.
-
-#### Cursor
-
-Put this in `.cursor/mcp.json` (one project) or `~/.cursor/mcp.json` (everywhere):
-
-```json
-{
-  "mcpServers": {
-    "workshop": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@qsrahman/workshop-mcp"]
-    }
-  }
-}
-```
-
-#### VS Code
-
-Put this in `.vscode/mcp.json` in your workspace, or in your user profile's `mcp.json`. VS Code's format differs from the others: the top-level key is `servers`, not `mcpServers`, and `type` is required.
-
-```json
-{
-  "servers": {
-    "workshop": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@qsrahman/workshop-mcp"]
-    }
-  }
-}
-```
+To run your own build, replace the command in any config above with `"command": "node", "args": ["/absolute/path/to/workshop-mcp/dist/index.js"]`, or for Claude Code `claude mcp add workshop -- node /absolute/path/to/workshop-mcp/dist/index.js`.
 
 #### Enabling web search
 
@@ -246,20 +190,10 @@ For Claude Desktop and Cursor, add an `env` object to the server entry:
 
 Keep the key out of anything you commit; `.mcp.json` and Cursor's project `mcp.json` are normally committed.
 
-#### From a source checkout
-
-To run your own build, after `pnpm install && pnpm build`, replace the command in any of the configs above with Node and the built entry point:
-
-```json
-{ "command": "node", "args": ["/absolute/path/to/workshop-mcp/dist/index.js"] }
-```
-
-For Claude Code: `claude mcp add workshop -- node /absolute/path/to/workshop-mcp/dist/index.js`.
-
 #### If it does not connect
 
 - Run the same command in a terminal. It prints `workshop-mcp running on stdio. File access is not restricted.` (or `Allowed: ...` when you listed directories) on stderr and then waits for input; press Ctrl-C to stop.
-- A relative directory is resolved against the client's working directory, which is often not the one you expect, so always use absolute paths. A directory that does not exist is skipped with a warning; with none left the server exits instead of running unrestricted. The client then shows only a failed connection or an empty tool list, without the reason, so a typo in a directory path looks like a broken server: the terminal run above shows the warning.
+- A relative directory is resolved against the client's working directory, which is often not the one you expect, so always use absolute paths. A directory that does not exist is skipped with a warning, and with none left the server exits instead of running unrestricted. The client then shows only a failed connection or an empty tool list, so a typo in a directory path looks like a broken server: the terminal run shows the warning.
 - An unknown option such as `--readonly` is an error, not a directory. Check the spelling.
 - The server needs Node.js 22 or newer on the `PATH` the client uses; GUI apps do not always see your shell's `PATH`.
 
@@ -271,22 +205,12 @@ For Claude Code: `claude mcp add workshop -- node /absolute/path/to/workshop-mcp
 | `pnpm watch`        | Compile on change                 |
 | `pnpm typecheck`    | Type-check `src/` and `tests/`    |
 | `pnpm test`         | Run the vitest suite              |
+| `pnpm test:coverage` | Run it with coverage, which fails below the floor in `vitest.config.ts` |
 | `pnpm format`       | Format with prettier              |
 | `pnpm format:check` | Check formatting                  |
 | `pnpm validate`     | Typecheck, test and format check  |
 
-Source layout:
-
-- `src/index.ts`: command-line parsing and the stdio entry point.
-- `src/server.ts`: `createServer`, the tool registrations (and `--read-only` filtering).
-- `src/paths.ts`: `validatePath`.
-- `src/files.ts`: read, head, tail and write.
-- `src/shell.ts`: command execution for the shell tool (execa).
-- `src/edit.ts`: the `edit_file` engine.
-- `src/net.ts`: the safe HTTP GET behind `fetch_url` (address policy, redirects, size cap).
-- `src/web.ts`: `fetch_url`: robots.txt, decoding, extraction to markdown, paging.
-- `src/brave.ts`: the Brave Search client.
-- `tests/`: vitest, one file per module (`paths`, `files`, `edit`, `shell`) plus `server.test.ts` (in-memory MCP client).
+The source layout, conventions and release process are described in [AGENTS.md](AGENTS.md).
 
 ## License
 
