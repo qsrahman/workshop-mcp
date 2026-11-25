@@ -8,10 +8,11 @@ export default defineConfig({
       provider: 'v8',
       include: ['src/**/*.ts'],
       reporter: ['text-summary', 'text'],
-      // A floor just under the current numbers (97% lines, 94% branches),
-      // so a refactor that leaves code untested fails. index.ts main() runs in a
-      // child process in cli.test.ts, which v8 coverage does not follow.
-      thresholds: { lines: 95, statements: 95, functions: 95, branches: 92 },
+      // A floor just under the current numbers (97.6% lines, 97.2% statements,
+      // 96.3% functions, 94.9% branches), so a refactor that leaves code
+      // untested fails. index.ts main() runs in a child process in cli.test.ts,
+      // which v8 coverage does not follow.
+      thresholds: { lines: 97, statements: 96, functions: 95, branches: 94 },
     },
   },
 })

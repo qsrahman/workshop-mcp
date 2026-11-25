@@ -7,7 +7,7 @@
 // spelled and as a typical origin resolves it), extracts the main content of a
 // page with Readability, converts it to markdown, and lets a long page be read
 // in parts. The code is written for Node, with a different set of libraries.
-import robotsModule from 'robots-parser'
+import robotsParser from 'robots-parser'
 import { z } from 'zod'
 import {
   FetchRefusedError,
@@ -15,10 +15,6 @@ import {
   safeGet,
   type SafeResponse,
 } from './net.js'
-
-// robots-parser's typings declare an ES default export, but the package is
-// CommonJS, and its default import is the function itself at runtime.
-const robotsParser = robotsModule as unknown as typeof robotsModule.default
 
 /** A failure whose message is already worded for the model; it is passed on unchanged. */
 class FetchFailure extends Error {
