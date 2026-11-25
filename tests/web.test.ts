@@ -93,7 +93,7 @@ describe('web fetching', () => {
         send(
           200,
           'text/html',
-          '<html><head><title>Links</title></head><body><div style="display:none"><a href="/docs/more">the docs</a></div></body></html>',
+          '<html><head><title>Links</title></head><body><div style="display:none"><a href="/docs/more">the docs</a><img src="/img/logo.png" alt="logo"></div></body></html>',
         )
       else if (path === '/empty-html') send(200, 'text/html', '')
       else if (path === '/deep')
@@ -170,6 +170,11 @@ describe('web fetching', () => {
     it('makes links absolute on the whole-body fallback too', async () => {
       const page = await fetcher().fetch(`${base}/fallback`)
       expect(page.text).toContain(`[the docs](${base}/docs/more)`)
+    })
+
+    it('makes images absolute on the whole-body fallback too', async () => {
+      const page = await fetcher().fetch(`${base}/fallback`)
+      expect(page.text).toContain(`![logo](${base}/img/logo.png)`)
     })
 
     it('explains HTML with no document element', async () => {

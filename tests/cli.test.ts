@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -53,7 +53,7 @@ describe('the built server process', () => {
     (await client.listTools()).tools.map((tool) => tool.name).sort()
 
   it('starts through a symlink, lists its tools and reads a file', async () => {
-    await withClient(bin, [root], async (client) => {
+    await withClient(bin, [], async (client) => {
       expect(await toolNames(client)).toEqual([
         'edit_file',
         'fetch_url',
@@ -69,27 +69,6 @@ describe('the built server process', () => {
       expect((result.content as Array<{ text: string }>)[0].text).toBe(
         'hello from a file',
       )
-    })
-  })
-
-  it('applies --read-only and --no-fetch from the command line', async () => {
-    await withClient(entry, ['--read-only', '--no-fetch', root], async (c) => {
-      expect(await toolNames(c)).toEqual([
-        'list_directory',
-        'read_file',
-        'read_multiple_files',
-        'search_files',
-      ])
-    })
-  })
-
-  it('refuses a path outside the directory it was started with', async () => {
-    await withClient(entry, [root], async (client) => {
-      const result = await client.callTool({
-        name: 'read_file',
-        arguments: { path: path.join(outside, 'workshop-mcp') },
-      })
-      expect(result.isError).toBe(true)
     })
   })
 
@@ -113,26 +92,34 @@ describe('the built server process', () => {
     expect(status([])).toBe(
       'workshop-mcp running on stdio. File access is not restricted.',
     )
-    expect(status(['--read-only'])).toContain(
-      'running on stdio (read-only). File access',
+    expect(status([], { BRAVE_API_KEY: 'k' })).toBe(
+      'workshop-mcp running on stdio (web search on). File access is not restricted.',
     )
-    expect(status(['--no-shell'])).toContain(
-      'running on stdio (shell disabled). File access',
-    )
-    expect(status(['--no-fetch'])).toContain(
-      'running on stdio (fetch disabled). File access',
-    )
-    expect(status(['--no-shell', '--no-fetch'])).toContain(
-      'running on stdio (shell disabled) (fetch disabled). File access',
-    )
-    expect(status([], { BRAVE_API_KEY: 'k' })).toContain(
-      'running on stdio (web search on). File access',
-    )
-    // --read-only wins over --no-shell, since it is the stricter mode
-    expect(status(['--read-only', '--no-shell'])).toContain(
-      'running on stdio (read-only).',
-    )
-    expect(status([root])).toMatch(/running on stdio\. Allowed: .*\S/)
+  })
+
+  const packageVersion = (
+    JSON.parse(readFileSync('package.json', 'utf-8')) as { version: string }
+  ).version
+
+  it('prints the version and exits with --version or -v, without starting', () => {
+    for (const flag of ['--version', '-v']) {
+      const run = exits([flag])
+      expect(run.status, flag).toBe(0)
+      expect(run.stdout).toBe(`${packageVersion}\n`)
+      expect(run.stderr).toBe('')
+    }
+  })
+
+  it('prints the options and exits with --help or -h', () => {
+    for (const flag of ['--help', '-h']) {
+      const run = exits([flag])
+      expect(run.status, flag).toBe(0)
+      expect(run.stdout).toContain('Usage: workshop-mcp')
+      expect(run.stdout).toContain('--allowed-hosts')
+      expect(run.stdout).toContain('--version')
+      expect(run.stdout).toContain('BRAVE_API_KEY')
+      expect(run.stderr).toBe('')
+    }
   })
 
   it('exits with status 1 and the usage for an unknown option', () => {
@@ -142,9 +129,20 @@ describe('the built server process', () => {
     expect(run.stderr).toContain('Usage: workshop-mcp')
   })
 
-  it('exits with status 1 rather than run unrestricted when no directory is usable', () => {
-    const run = exits([path.join(outside, 'missing')])
-    expect(run.status).toBe(1)
-    expect(run.stderr).toContain('none of the specified directories')
-  })
+  // A client config written for an older version must not start the server
+  // with more access than its author asked for.
+  it.each([
+    ['--read-only', 'Unknown option'],
+    ['--no-shell', 'Unknown option'],
+    ['--no-fetch', 'Unknown option'],
+    [path.resolve('.'), 'does not take positional arguments'],
+  ])(
+    'exits with status 1 for %s, which older versions took',
+    (arg, message) => {
+      const run = exits([arg])
+      expect(run.status).toBe(1)
+      expect(run.stderr).toContain(message)
+      expect(run.stderr).toContain('Usage: workshop-mcp')
+    },
+  )
 })

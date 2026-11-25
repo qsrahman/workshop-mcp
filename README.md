@@ -2,7 +2,7 @@
 
 A small [Model Context Protocol](https://modelcontextprotocol.io) server that gives an MCP client tools to read, write and edit files, run shell commands, fetch web pages and (with a Brave API key) search the web. It serves over stdio.
 
-**By default it is not restricted to any directory and the shell is on.** Turn things off with `--no-shell`, `--no-fetch` and `--read-only`, or limit file access by listing directories. See [Security model](#security-model) before pointing it at a model you do not fully trust.
+**It is not restricted to any directory, and it always serves the shell.** There are no switches that take file or shell access away. See [Security model](#security-model) before pointing it at a model you do not fully trust.
 
 > **Formerly `@qsrahman/fs-mcp-server`.** That name described only the file tools; the package was renamed when the web tools arrived. The old package is deprecated and stays at 0.2.0. To switch, replace `@qsrahman/fs-mcp-server` with `@qsrahman/workshop-mcp` in your client configuration; the command it installs is now `workshop-mcp`.
 
@@ -12,21 +12,19 @@ A small [Model Context Protocol](https://modelcontextprotocol.io) server that gi
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `read_file`           | Read a text file. Output is capped at about 100,000 characters; a longer file ends with the offset to continue from. `offset` and `limit` read a range of lines, `head` / `tail` the first / last N lines (use only one of the three). Directories, binary files and text that is not valid UTF-8 are refused with a clear message. |
 | `read_multiple_files` | Read up to 50 files at once, about 200,000 characters in total (a file that does not fit is cut, with where to continue). A failure on one file is reported inline and does not stop the others.                                                                                                                                    |
-| `list_directory`      | List a directory, one entry per line: directories end in `/` (and come first), symbolic links in `@`. `recursive` also lists subdirectories, breadth first; `.git` and `node_modules` are listed but not entered. At most 1,000 entries, with a note when it stops. Read-only. **Only offered when the shell is not** (`--no-shell` or `--read-only`), because the shell's `ls` does the same. |
-| `search_files`        | Find files and directories by **name**, not content: a glob (`*.ts` directly under the directory, `**/*.ts` at any depth) matched against each path relative to it, optional `excludePatterns`. Returns relative paths, directories ending in `/`; `.git` and `node_modules` are not entered. At most 1,000 matches, with a note when it stops. Read-only. **Only offered when the shell is not** (`--no-shell` or `--read-only`), because the shell's `find` does the same. |
 | `write_file`          | Create a file or overwrite it completely, creating any missing parent directories.                                                                                                                                                                                                                                                  |
 | `edit_file`           | Apply ordered `{oldText, newText}` edits and return a git-style diff. Each `oldText` must match exactly one place unless `replaceAll` is set. `dryRun` previews without writing.                                                                                                                                                    |
-| `shell`               | Run a shell command; returns its output as plain text, starting with the exit code when it fails and labelling stderr when there is any. On by default; turn it off with `--no-shell` (see below).                                                                                                                                                                                                                |
-| `fetch_url`           | Fetch a web page and return its readable content as markdown, in parts for a long page. On by default; turn it off with `--no-fetch`. Refuses private and local addresses, and obeys `robots.txt`.                                                                                                                                  |
+| `shell`               | Run a shell command; returns its output as plain text, starting with the exit code when it fails and labelling stderr when there is any. Always served (see Security model).                                                                                                                                                                                                                |
+| `fetch_url`           | Fetch a web page and return its readable content as markdown, in parts for a long page. Refuses private and local addresses, and obeys `robots.txt`.                                                                                                                                  |
 | `brave_web_search`    | Search the web with Brave Search; returns a numbered list of results (title, source, age, URL, description). **Only offered when `BRAVE_API_KEY` is set** (see Web search).                                                                                                                                                         |
 
 ### For agents
 
-The server sends MCP `instructions` when a client connects: whether file access is limited to directories, how relative paths resolve, and advice to read before editing, to prefer `edit_file` over `write_file`, and how to look around (`list_directory` and `search_files`, or `ls`, `find` and `grep` in the shell when it is on). Errors name the path as the client wrote it (`File not found: src/a.ts`, `src is a directory, not a file`). Tool inputs are strict: an unknown or misspelled argument (for example `start_line` for `offset`) is an error that names it, not something silently ignored. Every parameter has a description. The tool list never changes while the server runs, so it is announced with `listChanged: false`, and a client on the 2026-07-28 protocol revision may cache it for five minutes. A call whose arguments hold more than 5,000 array elements and object members combined (about 1,600 edits) is rejected before it runs; string contents such as a file's text do not count.
+The server sends MCP `instructions` when a client connects: that file access is not restricted, how relative paths resolve, and advice to read before editing, to prefer `edit_file` over `write_file`, and to look around with `ls`, `find` and `grep` in the shell. Errors name the path as the client wrote it (`File not found: src/a.ts`, `src is a directory, not a file`). Tool inputs are strict: an unknown or misspelled argument (for example `start_line` for `offset`) is an error that names it, not something silently ignored. Every parameter has a description. The tool list never changes while the server runs, so it is announced with `listChanged: false`, and a client on the 2026-07-28 protocol revision may cache it for five minutes. A call whose arguments hold more than 5,000 array elements and object members combined (about 1,600 edits) is rejected before it runs; string contents such as a file's text do not count.
 
 ### Fetching web pages
 
-`fetch_url` fetches a URL and returns the page's main content as markdown, without the navigation and footers. It is on by default, needs no key, and is the natural partner of `brave_web_search`: search to find a page, fetch to read it.
+`fetch_url` fetches a URL and returns the page's main content as markdown, without the navigation and footers. It needs no key, and is the natural partner of `brave_web_search`: search to find a page, fetch to read it.
 
 - It asks the site for markdown first and returns markdown as it is, otherwise it extracts the article from the HTML (with Mozilla's Readability) and converts it. `raw: true` returns the source instead. Text such as JSON passes through; images, PDFs and other binary content are refused.
 - A long page is cut at `max_length` characters (default 20,000), and the result says which `start_index` to continue from. The page is kept in memory for five minutes, so reading the rest does not fetch it again.
@@ -56,64 +54,54 @@ The server sends MCP `instructions` when a client connects: whether file access 
 
 ## Security model
 
-**By default there is no sandbox.** Started without directories, the file tools and the shell can reach anything the user running the server can: your home directory, SSH keys, credentials, other projects. The shell can also run any program and use the network. Use this server only with a client and model you trust, ideally as a restricted user or inside a container, and take away what an agent does not need:
+**There is no sandbox.** The file tools and the shell can reach anything the user running the server can: your home directory, SSH keys, credentials, other projects. The shell can also run any program and use the network. Use this server only with a client and model you trust, ideally as a restricted user or inside a container. The server has no option that takes file or shell access away; what you can control is where it runs and, for the web, what it may fetch:
 
-| You want                                     | Start the server with                      |
-| -------------------------------------------- | ------------------------------------------ |
-| no shell                                     | `--no-shell`                               |
-| no web fetching                              | `--no-fetch`                               |
-| fetching only from some sites                | `--allowed-hosts a.com,*.b.org`            |
-| no writing or editing, and no shell          | `--read-only`                              |
-| the file tools limited to some directories   | list them: `workshop-mcp /path/a /path/b` |
-| file access limited to directories, for real | list them **and** add `--no-shell`         |
+| You want                                          | Do                                                                                             |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| the model kept away from some files and commands  | run the server as a restricted user, or in a container with only the directories it should see |
+| fetching only from some sites                     | start the server with `--allowed-hosts a.com,*.b.org`                                          |
+| one tool unavailable, or approved call by call    | use your MCP client's own per-tool settings; the server always serves all of them              |
 
-The last row matters: listing directories limits the file tools and the shell's _starting_ directory, but a shell command can still touch anything, so directories alone are not a boundary while the shell is on.
+### File tools
 
-### Limiting file access to directories (optional)
-
-When directories are listed, only paths inside them are accessible to the file tools.
-
-- Paths are resolved to their real location before use, so a symlink pointing outside is refused.
-- A new path is allowed when its nearest existing ancestor is inside the allowed directories (that ancestor is resolved through symlinks first). `write_file` then creates the missing directories below it.
-- Each allowed directory is stored both as given and realpath'd (for example macOS `/var` and `/private/var`).
-- If directories are given but none can be opened, the server exits. It never falls back to being unrestricted.
-
-With or without directories, `write_file` creates files exclusively and never writes through a symlink, and refuses to overwrite anything that is not a regular file. Relative paths resolve against the first allowed directory, or against the server's working directory when there are none.
+- Paths are resolved to their real location before use, so a symlink is followed to the file it points to, and relative paths resolve against the server's working directory. `~` is expanded to your home directory.
+- `write_file` creates files exclusively and never writes through a symlink, and refuses to overwrite anything that is not a regular file. Reads open the file with `O_NOFOLLOW` too, so a symlink swapped in after the path was resolved is refused. Missing parent directories are created below the nearest existing ancestor.
+- `edit_file` refuses a file that is not valid UTF-8 text anywhere in it, so a rewrite can never turn stray bytes into replacement characters. Reads only check the start of a file, so a log with one stray byte can still be read.
 
 ### Fetching web pages
 
-`fetch_url` can request any public URL, which makes it a way for data to leave the machine: a page the model reads may carry hidden instructions telling it to read a file and put the contents in a URL it then fetches. The server cannot tell such a request from a legitimate one. The protections are the ones that limit what the model can do or reach: `--allowed-hosts` (the strongest, since an unlisted host is never contacted), `--no-fetch`, and keeping private data out of reach with directories and `--no-shell`. Note that `--read-only` does not turn fetching off, because a fetch changes nothing on this machine.
+`fetch_url` can request any public URL, which makes it a way for data to leave the machine: a page the model reads may carry hidden instructions telling it to read a file and put the contents in a URL it then fetches. The server cannot tell such a request from a legitimate one. The protections are the ones that limit what the model can do or reach: `--allowed-hosts` (the strongest, since an unlisted host is never contacted), and keeping private data out of reach by running the server as a restricted user or in a container.
 
 Separately, the address check keeps `fetch_url` from being used against services on your own machine or network (the classic server-side request forgery): see Fetching web pages under Tools. It does not defend against a malicious page, only against being aimed inward.
 
 ### Web search
 
-`brave_web_search` sends queries to Brave and returns web text the model then reads. The text is untrusted, so a page can try to steer the model. The server tells the model not to follow it, which is a mitigation, not a boundary; what limits the damage is what the model is allowed to do next (`--no-shell`, `--read-only`, directories). Searching changes nothing locally, so `--read-only` keeps this tool.
+`brave_web_search` sends queries to Brave and returns web text the model then reads. The text is untrusted, so a page can try to steer the model. The server tells the model not to follow it, which is a mitigation, not a boundary; what limits the damage is what the model is allowed to do next (your client's tool approvals, and where the server runs).
 
-The API key is held only in the server's memory and the `X-Subscription-Token` header of the request to Brave; it is never returned by a tool and is removed from the shell's environment. With unrestricted file access, though, the model can read any file you can, including a client config file that contains the key: list directories and use `--no-shell` if the key must stay out of reach.
+The API key is held only in the server's memory and the `X-Subscription-Token` header of the request to Brave; it is never returned by a tool and is removed from the shell's environment. Since file access is unrestricted, though, the model can read any file you can, including a client config file that contains the key. If the key must stay out of reach, run the server as a user who cannot read that file, or in a container.
 
 ### Shell tool
 
-`shell` is on by default. `--no-shell` removes it, and `--read-only` never serves it. **It is not sandboxed:** the command can read, write and delete anything the server process can, and can use the network. Its starting directory (`cwd`) defaults to the first allowed directory, or the server's working directory when there are none; with directories listed, `cwd` must be inside them, but the command itself is not confined.
+`shell` is always served. **It is not sandboxed:** the command can read, write and delete anything the server process can, and can use the network. Its starting directory (`cwd`) defaults to the server's working directory and can be any directory.
 
 Commands run with stdin closed, are killed (with the processes they started) after `timeoutMs` (default 30 s, `0` disables) or when the request is cancelled, and each of stdout and stderr is cut to 20,000 characters (start and end kept). Terminal escape sequences are stripped and binary output is replaced by a note. A non-zero exit is returned as a result with `isError` set. The `BRAVE_API_KEY` environment variable is not passed to commands.
 
 ### Limits of the checks
 
-Path resolution (`realpath`, `lstat`) gives up after 15 seconds with a message naming the path, so a file on a stalled cloud-storage or network drive does not hang the request forever. Reads and writes of the file itself are not time-limited. Reads and writes refuse a symbolic link swapped in as the file itself after validation. Not covered: a directory in the path being swapped for a symlink between validation and the read or write (a TOCTOU race), Windows/WSL path handling, and case-insensitive or Unicode-equivalent path matching. Do not treat this as a hardened sandbox.
+Path resolution (`realpath`, `lstat`) gives up after 15 seconds with a message naming the path, so a file on a stalled cloud-storage or network drive does not hang the request forever. Reads and writes of the file itself are not time-limited. Windows and WSL path handling is not covered. Do not treat any of this as a sandbox.
 
 ## Usage
 
 Requires Node.js 22 or newer.
 
 ```bash
-npx -y @qsrahman/workshop-mcp [options] [/path/to/dir ...]
+npx -y @qsrahman/workshop-mcp [options]
 ```
 
 npx fetches the [published package](https://www.npmjs.com/package/@qsrahman/workshop-mcp) on first use and caches it. Other ways to run it:
 
 - From GitHub: `npx -y github:qsrahman/workshop-mcp`. A git install builds the package with its `prepare` script, which npm skips if `ignore-scripts` is set in your npm config.
-- From source (needs [pnpm](https://pnpm.io)): `pnpm install && pnpm build`, then `node dist/index.js [options] [dir ...]`.
+- From source (needs [pnpm](https://pnpm.io)): `pnpm install && pnpm build`, then `node dist/index.js [options]`.
 - A local build as a package: `pnpm pack`, then `npx -y --package ./qsrahman-workshop-mcp-*.tgz workshop-mcp`.
 
 ### Configuration
@@ -123,37 +111,28 @@ workshop-mcp has **no configuration file**. Everything is set by command-line ar
 #### Command line
 
 ```text
-workshop-mcp [options] [directory ...]
+workshop-mcp [options]
 ```
 
 | Option                    | Default                  | Effect                                                                                                                                                                                                                                                                                                |
 | ------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--no-shell`              | the shell is on          | Do not serve `shell`. Because the shell's `ls` and `find` no longer cover it, `list_directory` and `search_files` are offered instead.                                                                                                                                                                |
-| `--read-only`             | writing is on            | Serve only tools annotated `readOnlyHint: true`: `read_file`, `read_multiple_files`, `list_directory`, `search_files`, `fetch_url` and, with a key, `brave_web_search`. `write_file`, `edit_file` and `shell` are absent from `tools/list`. It makes `--no-shell` redundant: the shell is never served. |
-| `--no-fetch`              | `fetch_url` is on        | Do not serve `fetch_url`. The three fetch options below then do nothing, though their values are still checked.                                                                                                                                                                                       |
 | `--allow-private-ips`     | private addresses refused | Let `fetch_url` reach loopback, private, link-local and other non-public addresses, such as a local dev server.                                                                                                                                                                                      |
 | `--ignore-robots-txt`     | `robots.txt` is obeyed   | Do not consult `robots.txt` before fetching a page.                                                                                                                                                                                                                                                   |
 | `--allowed-hosts <hosts>` | any public host          | Limit `fetch_url` to these hosts, for every request including `robots.txt` and redirects. See below.                                                                                                                                                                                                  |
-| `<directory> ...`         | no limit                 | Limit the file tools, and the shell's starting directory, to these directories. See below.                                                                                                                                                                                                            |
-| `--`                      |                          | Ends the options, so a directory whose name starts with `-` can follow.                                                                                                                                                                                                                               |
+| `-h`, `--help`            |                          | Print the options and exit with status 0. Nothing is served. |
+| `-v`, `--version`         |                          | Print the version and exit with status 0. |
 
 **`--allowed-hosts`** takes a comma-separated list, and can be repeated: `--allowed-hosts a.com,*.b.org` and `--allowed-hosts a.com --allowed-hosts '*.b.org'` are the same, and so is the `--allowed-hosts=a.com` form. Each entry is an exact host name or IP address (`docs.example.com`, `192.0.2.7`), or `*.domain`, which matches a subdomain at any depth but not the domain itself (`*.example.com` allows `docs.example.com` and `a.b.example.com`, not `example.com`). No scheme, port, path or other wildcard: `https://a.com` or `a.com:8080` is an error. Empty entries are ignored. Quote `*.domain` in a shell, which would otherwise expand it.
 
-**Directories** are absolute paths. A relative path is resolved against the server's working directory, which for a GUI client is often not the one you expect. The server does not expand `~`: a shell does that on a command line, but a JSON client config does not, so write the full path there. A directory that cannot be opened is skipped with a warning on stderr; if none can be, the server exits with status 1 and never falls back to being unrestricted. See [Limiting file access to directories](#limiting-file-access-to-directories-optional).
+`--help` and `--version` write to stdout, which is otherwise the protocol channel, and are answered before the server starts.
 
-**Mistakes are errors.** An unknown option, such as `--readonly`, `--help` or `--version`, makes the server print the usage on stderr and exit with status 1, since a mistyped security flag must not start it with more access than you asked for. Flags take no value: `--read-only=true` is an error. An invalid `--allowed-hosts` entry is an error too, even with `--no-fetch`.
+**Mistakes are errors.** An unknown option, such as `--readonly`, or any argument that is not an option makes the server print the usage on stderr and exit with status 1. Flags take no value: `--allow-private-ips=true` is an error. An invalid `--allowed-hosts` entry is an error too.
 
-On startup the server writes one line to stderr saying what it started with, for example `workshop-mcp running on stdio (read-only). File access is not restricted.`
+**Older configurations stop instead of running with more access.** The options `--no-shell`, `--read-only` and `--no-fetch`, and directory arguments, were removed in 0.7.0. A client configuration that still passes one of them makes the server exit with status 1, so remove it; the server cannot honour it.
 
-**Which tools each setup serves:**
+On startup the server writes one line to stderr saying what it started with, for example `workshop-mcp running on stdio (web search on). File access is not restricted.`
 
-| Setup                                    | Tools                                                                                                |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| default                                  | `read_file`, `read_multiple_files`, `write_file`, `edit_file`, `shell`, `fetch_url`                  |
-| `--no-shell`                             | `read_file`, `read_multiple_files`, `list_directory`, `search_files`, `write_file`, `edit_file`, `fetch_url` |
-| `--read-only`                            | `read_file`, `read_multiple_files`, `list_directory`, `search_files`, `fetch_url`                    |
-| any of these with `--no-fetch`           | the same, without `fetch_url`                                                                        |
-| any of these with `BRAVE_API_KEY` set    | the same, plus `brave_web_search`                                                                    |
+**Tools.** The server always serves `read_file`, `read_multiple_files`, `write_file`, `edit_file`, `shell` and `fetch_url`, and also `brave_web_search` when `BRAVE_API_KEY` is set.
 
 #### Environment variable
 
@@ -166,14 +145,8 @@ On startup the server writes one line to stderr saying what it started with, for
 On a command line:
 
 ```bash
-# Defaults: every tool except web search, no directory limit
+# Defaults: every tool except web search
 workshop-mcp
-
-# Read and search one project, change nothing
-workshop-mcp --read-only /home/me/project
-
-# Edit two projects; no shell and no web access, so nothing leaves them
-workshop-mcp --no-shell --no-fetch /home/me/project-a /home/me/project-b
 
 # Fetch pages from a few documentation sites only
 workshop-mcp --allowed-hosts docs.python.org,'*.mozilla.org'
@@ -195,10 +168,8 @@ The same in a client's JSON configuration, with the arguments in `args` and the 
       "args": [
         "-y",
         "@qsrahman/workshop-mcp",
-        "--no-shell",
         "--allowed-hosts",
-        "docs.python.org,*.mozilla.org",
-        "/home/me/project"
+        "docs.python.org,*.mozilla.org"
       ],
       "env": { "BRAVE_API_KEY": "YOUR_KEY" }
     }
@@ -208,7 +179,7 @@ The same in a client's JSON configuration, with the arguments in `args` and the 
 
 ### Connect a client
 
-Every client starts the server as a subprocess over stdio. The examples are unrestricted with the shell on, which is the default. Add `--no-shell` or `--read-only` after the package name to take access away, and absolute directories after it to limit the file tools (see [Security model](#security-model)).
+Every client starts the server as a subprocess over stdio. The server is not restricted to any directory and always serves the shell (see [Security model](#security-model)).
 
 **Claude Code:**
 
@@ -219,7 +190,7 @@ claude mcp add workshop -- npx -y @qsrahman/workshop-mcp
 Everything after `--` is the server command, so server options go there too. The default scope is just you in the current project; add `--scope project` before the name to write a shareable `.mcp.json` (Claude Code asks you to approve a project server before using it), or `--scope user` to use it in every project:
 
 ```bash
-claude mcp add --scope project workshop -- npx -y @qsrahman/workshop-mcp --no-shell /path/to/project
+claude mcp add --scope project workshop -- npx -y @qsrahman/workshop-mcp --allowed-hosts docs.python.org
 ```
 
 **Other clients** take the same entry in their MCP configuration file:
@@ -241,7 +212,7 @@ claude mcp add --scope project workshop -- npx -y @qsrahman/workshop-mcp --no-sh
 | Cursor         | `.cursor/mcp.json` (one project) or `~/.cursor/mcp.json` (everywhere)                                                                                             | Add `"type": "stdio"` to the entry.                               |
 | VS Code        | `.vscode/mcp.json` in the workspace, or your user profile's `mcp.json`                                                                                            | The top-level key is `servers`, not `mcpServers`, and `"type": "stdio"` is required. |
 
-Claude Desktop writes the server's stderr (including the startup line that says whether file access is restricted) to `~/Library/Logs/Claude/mcp-server-workshop.log` on macOS, `%APPDATA%\Claude\logs` on Windows and `~/.config/Claude/logs` on Linux.
+Claude Desktop writes the server's stderr (including the startup line) to `~/Library/Logs/Claude/mcp-server-workshop.log` on macOS, `%APPDATA%\Claude\logs` on Windows and `~/.config/Claude/logs` on Linux.
 
 To run your own build, replace the command in any config above with `"command": "node", "args": ["/absolute/path/to/workshop-mcp/dist/index.js"]`, or for Claude Code `claude mcp add workshop -- node /absolute/path/to/workshop-mcp/dist/index.js`.
 
@@ -267,9 +238,9 @@ Keep the key out of anything you commit; `.mcp.json` and Cursor's project `mcp.j
 
 #### If it does not connect
 
-- Run the same command in a terminal. It prints `workshop-mcp running on stdio. File access is not restricted.` (or `Allowed: ...` when you listed directories) on stderr and then waits for input; press Ctrl-C to stop.
-- A relative directory is resolved against the client's working directory, which is often not the one you expect, so always use absolute paths. A directory that does not exist is skipped with a warning, and with none left the server exits instead of running unrestricted. The client then shows only a failed connection or an empty tool list, so a typo in a directory path looks like a broken server: the terminal run shows the warning.
-- An unknown option such as `--readonly` is an error, not a directory. Check the spelling.
+- Run the same command in a terminal. It prints `workshop-mcp running on stdio. File access is not restricted.` on stderr and then waits for input; press Ctrl-C to stop.
+- A configuration written for an older version that still passes `--read-only`, `--no-shell`, `--no-fetch` or a directory makes the server exit with status 1 and print the usage. The client then shows only a failed connection or an empty tool list, without the reason, so the terminal run shows it. Remove the argument.
+- An unknown option such as `--readonly` is an error. Check the spelling.
 - The server needs Node.js 22 or newer on the `PATH` the client uses; GUI apps do not always see your shell's `PATH`.
 
 ## Development

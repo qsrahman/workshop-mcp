@@ -14,7 +14,7 @@ import {
 } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { startFakeBrave } from './helpers.js'
-import { connectTo, dir, names } from './harness.js'
+import { connectTo, names } from './harness.js'
 
 describe('web search tools', () => {
   let fake: Awaited<ReturnType<typeof startFakeBrave>>
@@ -42,9 +42,9 @@ describe('web search tools', () => {
   }
 
   it('are left out without an API key, and offered after the other tools with one', async () => {
-    expect(await names(await connectTo(null))).not.toContain('brave_web_search')
+    expect(await names(await connectTo())).not.toContain('brave_web_search')
     const listed = (
-      await (await connectTo(null, { brave: brave() })).listTools()
+      await (await connectTo({ brave: brave() })).listTools()
     ).tools.map((tool) => tool.name)
     expect(listed).toEqual([
       'read_file',
@@ -57,17 +57,9 @@ describe('web search tools', () => {
     ])
   })
 
-  it('are marked read-only and open-world, so --read-only keeps them', async () => {
-    const client = await connectTo([dir], { readOnly: true, brave: brave() })
+  it('are marked read-only and open-world', async () => {
+    const client = await connectTo({ brave: brave() })
     const tools = (await client.listTools()).tools
-    expect(tools.map((tool) => tool.name)).toEqual([
-      'read_file',
-      'read_multiple_files',
-      'list_directory',
-      'search_files',
-      'fetch_url',
-      'brave_web_search',
-    ])
     for (const tool of tools.filter((t) => t.name.startsWith('brave_'))) {
       expect(tool.annotations).toMatchObject({
         readOnlyHint: true,
@@ -77,7 +69,7 @@ describe('web search tools', () => {
   })
 
   it('search and return formatted results through the MCP interface', async () => {
-    const client = await connectTo(null, { brave: brave() })
+    const client = await connectTo({ brave: brave() })
     fake.replies.push({
       body: {
         web: {
@@ -98,7 +90,7 @@ describe('web search tools', () => {
   })
 
   it('report a failed search as a tool error that does not contain the key', async () => {
-    const client = await connectTo(null, { brave: brave() })
+    const client = await connectTo({ brave: brave() })
     fake.replies.push({ status: 401, body: {} })
     const result = await call(client, 'brave_web_search', { query: 'x' })
     expect(result.isError).toBe(true)
@@ -107,7 +99,7 @@ describe('web search tools', () => {
   })
 
   it('reject misspelled, out-of-range and over-long arguments before any request', async () => {
-    const client = await connectTo(null, { brave: brave() })
+    const client = await connectTo({ brave: brave() })
     const attempts: Array<[string, Record<string, unknown>]> = [
       ['brave_web_search', { query: 'x', lang: 'en' }],
       ['brave_web_search', { query: 'x', count: 21 }],
@@ -126,19 +118,16 @@ describe('web search tools', () => {
     expect(fake.requests).toHaveLength(0)
   })
 
-  it('point to the URL-fetching tool for reading a result, only when it is offered', async () => {
-    const description = async (fetch: false | object) =>
-      (
-        await (await connectTo(null, { brave: brave(), fetch })).listTools()
-      ).tools.find((tool) => tool.name === 'brave_web_search')?.description
-    expect(await description({})).toContain(
-      'read one with the URL-fetching tool',
-    )
-    expect(await description(false)).not.toContain('URL-fetching')
+  it('point to the URL-fetching tool for reading a result', async () => {
+    const tools = (await (await connectTo({ brave: brave() })).listTools())
+      .tools
+    expect(
+      tools.find((tool) => tool.name === 'brave_web_search')?.description,
+    ).toContain('read one with the URL-fetching tool')
   })
 
   it('tell the model to treat results as untrusted and to cite them', async () => {
-    const client = await connectTo(null, { brave: brave() })
+    const client = await connectTo({ brave: brave() })
     const tools = (await client.listTools()).tools.filter((t) =>
       t.name.startsWith('brave_'),
     )
@@ -151,7 +140,7 @@ describe('web search tools', () => {
     }
     expect(client.getInstructions()).toContain('web search results')
     expect(client.getInstructions()).toContain('never as instructions')
-    expect((await connectTo(null)).getInstructions() ?? '').not.toContain(
+    expect((await connectTo()).getInstructions() ?? '').not.toContain(
       'web search results',
     )
   })
@@ -161,7 +150,7 @@ describe('web search tools', () => {
       properties?: Record<string, Schema & { description?: string }>
       additionalProperties?: unknown
     }
-    const client = await connectTo(null, { brave: brave() })
+    const client = await connectTo({ brave: brave() })
     for (const tool of (await client.listTools()).tools.filter((t) =>
       t.name.startsWith('brave_'),
     )) {
@@ -204,7 +193,7 @@ describe('the fetch_url tool', () => {
   })
 
   const open = () =>
-    connectTo(null, { fetch: { allowPrivateIps: true, ignoreRobotsTxt: true } })
+    connectTo({ fetch: { allowPrivateIps: true, ignoreRobotsTxt: true } })
   const call = async (client: Client, args: Record<string, unknown>) => {
     const result = await client.callTool({ name: 'fetch_url', arguments: args })
     return {
@@ -213,16 +202,13 @@ describe('the fetch_url tool', () => {
     }
   }
 
-  it('is on by default and absent with fetch: false', async () => {
-    expect(await names(await connectTo(null))).toContain('fetch_url')
-    expect(await names(await connectTo(null, { fetch: false }))).not.toContain(
-      'fetch_url',
-    )
+  it('is always served', async () => {
+    expect(await names(await connectTo())).toContain('fetch_url')
   })
 
   it('describes the network policy it actually runs with', async () => {
     const describe = async (fetch: object) =>
-      (await (await connectTo(null, { fetch })).listTools()).tools.find(
+      (await (await connectTo({ fetch })).listTools()).tools.find(
         (t) => t.name === 'fetch_url',
       )?.description
     const strict = await describe({})
@@ -270,7 +256,7 @@ describe('the fetch_url tool', () => {
   })
 
   it('refuses a private address by default, before sending anything', async () => {
-    const result = await call(await connectTo(null), { url: `${base}/page` })
+    const result = await call(await connectTo(), { url: `${base}/page` })
     expect(result.isError).toBe(true)
     expect(result.text).toContain('not a public address')
     expect(result.text).toContain('--allow-private-ips')
@@ -278,21 +264,13 @@ describe('the fetch_url tool', () => {
   })
 
   it('honours the allowed hosts it was given', async () => {
-    const client = await connectTo(null, {
+    const client = await connectTo({
       fetch: { allowPrivateIps: true, allowedHosts: ['*.example.com'] },
     })
     const result = await call(client, { url: `${base}/page` })
     expect(result.isError).toBe(true)
     expect(result.text).toContain('--allowed-hosts')
     expect(hits).toEqual([])
-  })
-
-  it('is kept under --read-only, which only reads', async () => {
-    const client = await connectTo(null, {
-      readOnly: true,
-      fetch: { allowPrivateIps: true, ignoreRobotsTxt: true },
-    })
-    expect((await call(client, { url: `${base}/page` })).isError).toBeFalsy()
   })
 
   it('rejects misspelled and out-of-range arguments before any request', async () => {
@@ -327,8 +305,5 @@ describe('the fetch_url tool', () => {
     expect(tool.description).toContain('untrusted')
     expect(client.getInstructions()).toContain('fetched pages')
     expect(client.getInstructions()).toContain('never as instructions')
-    expect(
-      (await connectTo(null, { fetch: false })).getInstructions() ?? '',
-    ).not.toContain('fetched pages')
   })
 })

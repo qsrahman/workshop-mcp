@@ -5,16 +5,14 @@ import fs, { type FileHandle } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
-import { minimatch } from 'minimatch'
-import { FsTimeoutError, withFsTimeout } from './paths.js'
 
-// File reading constants
+// File reading constants.
 const TAIL_CHUNK_BYTES = 64 * 1024
 const READ_CHUNK_BYTES = 64 * 1024
 // How much of a file is checked before it is read. Reading is lossy and
 // harmless, so a stray invalid byte later on is not a reason to refuse a file.
 const BINARY_SNIFF_BYTES = 8192
-const LF_BYTE = 0x0a // newline character for binary scanning
+const LF_BYTE = 0x0a // counted to find the last lines of a file
 
 // How much text one read returns. This protects the model's context window,
 // not memory: 100,000 characters is about 25k tokens. Longer output is cut at
@@ -30,25 +28,26 @@ export const normalizeLineEndings = (text: string) =>
 const ERROR_MESSAGES: Record<string, (shown: string) => string> = {
   ENOENT: (shown) => `File not found: ${shown}`,
   EISDIR: (shown) => `${shown} is a directory, not a file`,
-  ENOTADIR: (shown) => `${shown} is a file, not a directory; read it as a file`,
   ENOTDIR: (shown) => `A parent of ${shown} is not a directory`,
   EACCES: (shown) => `Permission denied: ${shown}`,
   EPERM: (shown) => `Permission denied: ${shown}`,
   ELOOP: (shown) => `Refusing to read a symbolic link: ${shown}`,
+  ENOTFILE: (shown) =>
+    `Refusing to read: ${shown} is not a regular file (it is a device, pipe or socket)`,
   ENOTREG: (shown) => `Refusing to write: ${shown} is not a regular file`,
   EBINARY: (shown) =>
     `${shown} looks like a binary file or is not valid UTF-8 text`,
 }
 
 /** An error carrying a Node-style `code`, which friendlyFsError understands. */
-export function codedError(code: string, message = code): Error {
+function codedError(code: string, message = code): Error {
   return Object.assign(new Error(message), { code })
 }
 
 /**
  * Rewrite a low-level fs error into one an agent can act on, naming the path as
- * the caller spelled it. Errors without a known code (such as the access-denied
- * errors from validatePath) pass through unchanged.
+ * the caller spelled it. Errors without a known code (such as the broken-symlink
+ * error from validatePath) pass through unchanged.
  */
 export function friendlyFsError(error: unknown, shown: string): Error {
   const builder = ERROR_MESSAGES[(error as NodeJS.ErrnoException)?.code ?? '']
@@ -58,20 +57,23 @@ export function friendlyFsError(error: unknown, shown: string): Error {
 }
 
 /**
- * Open a file once for reading, refusing a directory (EISDIR), a symlink
- * swapped in after path validation (ELOOP) and a file that does not look like
- * UTF-8 text (EBINARY): the first `checkBytes` bytes must hold no NUL and be
- * valid UTF-8. The caller reads through the same handle, so the file checked
- * is the file read, and closes it.
+ * Open a file once for reading, refusing a directory (EISDIR), anything else
+ * that is not a regular file (ENOTFILE: a device would be read without end, as
+ * /dev/zero reports size 0), a symlink swapped in after path validation (ELOOP)
+ * and a file that does not look like UTF-8 text (EBINARY): the first
+ * `checkBytes` bytes must hold no NUL and be valid UTF-8. The caller reads
+ * through the same handle, so the file checked is the file read, and closes it.
  */
 async function openTextFile(
   filePath: string,
   checkBytes = BINARY_SNIFF_BYTES,
 ): Promise<{ handle: FileHandle; size: number }> {
-  const { O_RDONLY, O_NOFOLLOW = 0 } = constants
+  // O_NONBLOCK: opening a pipe with no writer would otherwise wait for one,
+  // for ever. It changes nothing for a regular file, the only kind read below.
+  const { O_RDONLY, O_NOFOLLOW = 0, O_NONBLOCK = 0 } = constants
   let handle: FileHandle
   try {
-    handle = await fs.open(filePath, O_RDONLY | O_NOFOLLOW)
+    handle = await fs.open(filePath, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
       throw codedError('ELOOP')
@@ -82,6 +84,7 @@ async function openTextFile(
     const stats = await handle.stat()
     // Named here, before any read: reading a directory fails with a less helpful error.
     if (stats.isDirectory()) throw codedError('EISDIR')
+    if (!stats.isFile()) throw codedError('ENOTFILE')
     // A start cut off mid-file may end inside a multi-byte character; the
     // decoder in streaming mode treats that as incomplete, not invalid. Only a
     // check that reaches the end of the file may call a truncated one invalid.
@@ -245,8 +248,10 @@ export async function tailFile(
       Buffer.concat(chunks).toString('utf-8'),
     ).replace(/\n$/, '')
     const lines = text === '' ? [] : text.split('\n')
-    // Unless the start of the file was reached, the first line is partial.
-    if (position > 0) lines.shift()
+    // Unless the start of the file was reached, the first line is partial. It
+    // needs no special handling: when enough lines were read, the last n leave
+    // it out, and when the byte limit stopped the read first, a cut line is
+    // all there is, and the cap below says so.
     const result = lines.slice(-n).join('\n')
     return result.length > maxChars
       ? `[... showing only the last ${maxChars} characters ...]\n${result.slice(-maxChars)}`
@@ -257,169 +262,6 @@ export async function tailFile(
 }
 
 const queues = new Map<string, Promise<unknown>>()
-
-// How many entries one listing or search returns: it is for orientation, and a
-// longer one costs context without helping the model choose where to look.
-const MAX_LIST_ENTRIES = 1000
-// How many entries one search looks at before it gives up.
-const MAX_SEARCH_VISITS = 100_000
-// Listed, but never entered by a recursive listing or a search: they would use
-// up the entries on files nobody asked about.
-const NOT_ENTERED = new Set(['.git', 'node_modules'])
-
-/**
- * The entries of `dir/prefix`, directories first, each sorted by name. Only
- * stops waiting (see paths.ts): a directory on a stalled cloud or network
- * drive must not hold the call forever, and a timeout ends the whole walk.
- * Returns undefined for a subdirectory that cannot be read; the starting
- * directory (empty `prefix`) failing is the request failing.
- */
-async function readWalkDirectory(dir: string, prefix: string) {
-  const where = path.join(dir, prefix)
-  let entries
-  try {
-    entries = await withFsTimeout(
-      fs.readdir(where, { withFileTypes: true }),
-      'readdir',
-      where,
-    )
-  } catch (error) {
-    if (error instanceof FsTimeoutError) throw error
-    if (prefix !== '') return undefined
-    throw (error as NodeJS.ErrnoException).code === 'ENOTDIR'
-      ? codedError('ENOTADIR')
-      : error
-  }
-  return entries.sort(
-    (a, b) =>
-      Number(b.isDirectory()) - Number(a.isDirectory()) ||
-      (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
-  )
-}
-
-/**
- * The entries of a directory, one per line: directories end in "/" and symbolic
- * links in "@" (a link is never followed). Directories come first, then files,
- * each sorted by name. A recursive listing goes breadth first, so the shallow
- * entries are the ones kept when the cap cuts it, and names are relative to
- * `dir`.
- */
-export async function listDirectory(
-  dir: string,
-  recursive: boolean,
-): Promise<string> {
-  const lines: string[] = []
-  const queue = ['']
-  let unreadable = false
-  for (let next = 0; next < queue.length; next++) {
-    const prefix = queue[next]
-    const entries = await readWalkDirectory(dir, prefix)
-    if (!entries) {
-      unreadable = true
-      continue
-    }
-    for (const entry of entries) {
-      if (lines.length >= MAX_LIST_ENTRIES) {
-        lines.push(
-          `[... the listing stopped after ${MAX_LIST_ENTRIES} entries; list a subdirectory to see more]`,
-        )
-        return lines.join('\n')
-      }
-      const name = `${prefix}${entry.name}`
-      if (entry.isDirectory()) {
-        lines.push(`${name}/`)
-        if (recursive && !NOT_ENTERED.has(entry.name)) queue.push(`${name}/`)
-      } else {
-        lines.push(entry.isSymbolicLink() ? `${name}@` : name)
-      }
-    }
-  }
-  if (unreadable) lines.push('[some subdirectories could not be read]')
-  return lines.length > 0 ? lines.join('\n') : '(empty)'
-}
-
-/**
- * Whether an exclude pattern drops this entry (and so everything below it).
- * A pattern without "*" is a name matched at any depth ("node_modules" drops
- * every node_modules directory, but not node_modules_old); one with "*" is a
- * glob matched as written. A glob ending in "/**" also drops the directory it
- * names, which minimatch would otherwise match only below it.
- */
-function isExcluded(
-  relative: string,
-  patterns: readonly string[],
-  isDirectory: boolean,
-): boolean {
-  const match = (pattern: string) => minimatch(relative, pattern, { dot: true })
-  return patterns.some((pattern) =>
-    pattern.includes('*')
-      ? match(pattern) ||
-        (isDirectory && pattern.endsWith('/**') && match(pattern.slice(0, -3)))
-      : match(pattern) || match(`**/${pattern}`),
-  )
-}
-
-/**
- * Find entries by name: every file or directory under `dir` whose path
- * relative to `dir` matches the glob `pattern` (case-sensitive, dot files
- * included). It never reads file contents. Listed like listDirectory: relative
- * paths, "/" on directories, "@" on symbolic links, which are never followed.
- * Breadth first, so the shallow matches are the ones kept when the cap cuts
- * it; excluded entries are pruned before they are read.
- *
- * Adapted from the search_files tool of modelcontextprotocol/servers (see
- * THIRD_PARTY_NOTICES.md): the glob semantics and the exclude patterns follow
- * it. The walk, the limits and the output are written for this server.
- */
-export async function searchFiles(
-  dir: string,
-  pattern: string,
-  excludePatterns: readonly string[] = [],
-  maxVisits: number = MAX_SEARCH_VISITS,
-): Promise<string> {
-  const lines: string[] = []
-  const queue = ['']
-  let unreadable = false
-  let visited = 0
-  for (let next = 0; next < queue.length; next++) {
-    const prefix = queue[next]
-    const entries = await readWalkDirectory(dir, prefix)
-    if (!entries) {
-      unreadable = true
-      continue
-    }
-    for (const entry of entries) {
-      const name = `${prefix}${entry.name}`
-      const isDirectory = entry.isDirectory()
-      if (isExcluded(name, excludePatterns, isDirectory)) continue
-      if (++visited > maxVisits) {
-        lines.push(
-          `[... the search stopped after looking at ${maxVisits} entries; search a subdirectory or add excludePatterns]`,
-        )
-        return lines.join('\n')
-      }
-      if (minimatch(name, pattern, { dot: true })) {
-        if (lines.length >= MAX_LIST_ENTRIES) {
-          lines.push(
-            `[... the search stopped after ${MAX_LIST_ENTRIES} matches; use a narrower pattern or path to see more]`,
-          )
-          return lines.join('\n')
-        }
-        lines.push(
-          isDirectory ? `${name}/` : entry.isSymbolicLink() ? `${name}@` : name,
-        )
-      }
-      if (isDirectory && !NOT_ENTERED.has(entry.name)) queue.push(`${name}/`)
-    }
-  }
-  if (lines.length === 0) lines.push('No matches found')
-  if (unreadable) {
-    lines.push(
-      '[some subdirectories could not be read, so matches inside them are missing]',
-    )
-  }
-  return lines.join('\n')
-}
 
 /**
  * Run `fn` after every earlier call with the same key has finished, so two
@@ -445,8 +287,7 @@ export async function withFileLock<T>(
  * Create or overwrite a file, creating any missing parent directories.
  * Exclusive creation never writes through a symlink; an existing entry must be
  * a regular file, opened with O_NOFOLLOW. The directories are made below the
- * nearest existing ancestor that validatePath already checked, so with allowed
- * directories they stay inside them.
+ * nearest existing ancestor that validatePath resolved.
  */
 export async function writeFileContent(
   filePath: string,

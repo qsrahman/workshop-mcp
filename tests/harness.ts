@@ -7,9 +7,12 @@ import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import { createServer, type ServerOptions } from '../src/server.js'
 
 // Importing this file gives a test file a fresh temp directory (`dir`, holding
-// note.txt) and cleanup of every client connected through it, for each test.
+// note.txt) that is also the working directory, so a relative path in a test
+// means a file in it, and cleanup of every client connected through it, for
+// each test.
 export let dir: string
 let closers: Array<() => Promise<void>>
+let startDirectory: string
 
 beforeEach(async () => {
   dir = await fs.realpath(
@@ -17,16 +20,18 @@ beforeEach(async () => {
   )
   await fs.writeFile(path.join(dir, 'note.txt'), 'original')
   closers = []
+  startDirectory = process.cwd()
+  process.chdir(dir)
 })
 
 afterEach(async () => {
   for (const close of closers.reverse()) await close()
+  process.chdir(startDirectory)
   await fs.rm(dir, { recursive: true, force: true })
 })
 
-/** A client connected to a server built with `allowedDirs` and `options`. */
+/** A client connected to a server built with `options`. */
 export async function connectTo(
-  allowedDirs: string[] | null,
   options: ServerOptions = {},
   // Left out, the client's default applies. 'auto' negotiates the 2026-07-28
   // protocol revision, 'legacy' the 2025 one.
@@ -34,7 +39,7 @@ export async function connectTo(
 ): Promise<Client> {
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair()
-  const handle = serveStdio(() => createServer(allowedDirs, options), {
+  const handle = serveStdio(() => createServer(options), {
     transport: serverTransport,
   })
   const client = new Client(
@@ -49,12 +54,8 @@ export async function connectTo(
   return client
 }
 
-/** The usual test server: restricted to `dir`, shell off unless asked for. */
-export const connect = (
-  readOnly: boolean,
-  shell = false,
-  mode?: 'auto' | 'legacy',
-) => connectTo([dir], { readOnly, shell }, mode)
+/** The usual test server: nothing turned on or off. */
+export const connect = (mode?: 'auto' | 'legacy') => connectTo({}, mode)
 
 export const callError = async (
   client: Client,

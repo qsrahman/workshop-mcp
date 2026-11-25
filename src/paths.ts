@@ -13,7 +13,7 @@ import path from 'node:path'
 export const FS_CALL_TIMEOUT_MS = 15_000
 
 /** A filesystem call that did not settle within the timeout. */
-export class FsTimeoutError extends Error {
+class FsTimeoutError extends Error {
   constructor(operation: string, target: string, ms: number) {
     super(
       `Filesystem call timed out after ${ms} ms: ${operation} ${target}. ` +
@@ -45,42 +45,22 @@ export async function withFsTimeout<T>(
   }
 }
 
-function isWithin(target: string, dirs: readonly string[]): boolean {
-  // A root such as "/" already ends in a separator.
-  return dirs.some(
-    (dir) =>
-      target === dir ||
-      target.startsWith(dir.endsWith(path.sep) ? dir : dir + path.sep),
-  )
-}
-
 /**
- * Resolve `requested` to a real path, or throw. With allowed directories, the
- * path must be inside them: symlinks are resolved first, so a link pointing
- * outside is refused. With `null` there is no restriction, and relative paths
- * resolve against the working directory. (`null`, not an empty list: a server
- * whose directories all failed to open must refuse everything, not allow it.) A path
- * that does not exist yet is accepted when its nearest existing ancestor is
- * allowed: the result is that ancestor's real path plus the missing names, so a
- * caller can create the missing directories. Non-null `allowedDirs` must already be
- * realpath'd (see resolveAllowedDirectories).
+ * Resolve `requested` to a real path, or throw. Symlinks are resolved first, so
+ * the file tools act on the file a link points to, and relative paths resolve
+ * against the working directory. A path that does not exist yet is accepted:
+ * the result is its nearest existing ancestor's real path plus the missing
+ * names, so a caller can create the missing directories. Nothing is restricted:
+ * the server can reach whatever the user running it can.
  */
-export async function validatePath(
-  requested: string,
-  allowedDirs: readonly string[] | null,
-): Promise<string> {
-  if (requested.includes('\0')) throw new Error('Access denied - invalid path')
+export async function validatePath(requested: string): Promise<string> {
+  if (requested.includes('\0'))
+    throw new Error('Invalid path: it contains a NUL character')
   const expanded =
     requested === '~' || requested.startsWith('~/')
       ? path.join(os.homedir(), requested.slice(1))
       : requested
-  const absolute = path.resolve(allowedDirs?.[0] ?? process.cwd(), expanded)
-  if (allowedDirs && !isWithin(absolute, allowedDirs)) {
-    throw new Error(
-      `Access denied - path outside allowed directories: ${absolute} not in ` +
-        allowedDirs.join(', '),
-    )
-  }
+  const absolute = path.resolve(process.cwd(), expanded)
 
   // Walk up to the nearest ancestor that exists.
   const missing: string[] = []
@@ -110,12 +90,5 @@ export async function validatePath(
     existing = path.dirname(existing)
   }
 
-  if (allowedDirs && !isWithin(real, allowedDirs)) {
-    throw new Error(
-      missing.length === 0
-        ? `Access denied - symlink target outside allowed directories: ${real}`
-        : `Access denied - parent directory outside allowed directories: ${real}`,
-    )
-  }
   return path.join(real, ...missing)
 }

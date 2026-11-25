@@ -1,18 +1,17 @@
 // Adapted from modelcontextprotocol/servers (src/filesystem); see THIRD_PARTY_NOTICES.md.
+import type { McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 import { applyFileEdits, fileEditSchema } from '../edit.js'
 import {
   MAX_MULTI_READ_CHARS,
   friendlyFsError,
-  listDirectory,
-  searchFiles,
   readText,
   tailFile,
   withFileLock,
   writeFileContent,
 } from '../files.js'
 import { validatePath } from '../paths.js'
-import { READ_ANNOTATIONS, text, type RegisterTool } from './common.js'
+import { READ_ANNOTATIONS, text } from './common.js'
 
 const MAX_READ_PATHS = 50
 
@@ -32,23 +31,12 @@ async function guard<T>(shown: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export function registerFileTools(
-  registerTool: RegisterTool,
-  allowedDirs: readonly string[] | null,
-  { explore }: { explore: boolean },
-) {
+export function registerFileTools(server: McpServer) {
   const pathParam = z
     .string()
-    .describe(
-      allowedDirs
-        ? 'Absolute path, or relative to the first allowed directory.'
-        : "Absolute path, or relative to the server's working directory.",
-    )
-  const onlyWithin = allowedDirs
-    ? ' Only works within allowed directories.'
-    : ''
+    .describe("Absolute path, or relative to the server's working directory.")
 
-  registerTool(
+  server.registerTool(
     'read_file',
     {
       title: 'Read File',
@@ -56,8 +44,7 @@ export function registerFileTools(
         'Read a text file (not a directory or a binary file). Output is capped at about 100,000 characters; a longer ' +
         'file ends with the offset to continue from. Use offset and limit for a ' +
         'range of lines, head for the first N lines or tail for the last N (use ' +
-        'only one of the three).' +
-        onlyWithin,
+        'only one of the three).',
       inputSchema: z.strictObject({
         path: pathParam,
         offset: z
@@ -98,7 +85,7 @@ export function registerFileTools(
           'Use only one of head, tail, or offset/limit, not a combination',
         )
       }
-      const file = await validatePath(args.path, allowedDirs)
+      const file = await validatePath(args.path)
       return text(
         await guard(args.path, () =>
           args.tail !== undefined
@@ -112,7 +99,7 @@ export function registerFileTools(
     },
   )
 
-  registerTool(
+  server.registerTool(
     'read_multiple_files',
     {
       title: 'Read Multiple Files',
@@ -120,8 +107,7 @@ export function registerFileTools(
         'Read several files in one call, instead of reading them one at a time; each ' +
         'is returned under its path, and a failed read does not stop the others. Output is capped at about 200,000 characters ' +
         'in total: a file that does not fit is cut, with the offset to continue ' +
-        'from when you read it on its own.' +
-        onlyWithin,
+        'from when you read it on its own.',
       inputSchema: z.strictObject({
         paths: z
           .array(z.string())
@@ -144,7 +130,7 @@ export function registerFileTools(
           continue
         }
         try {
-          const file = await validatePath(filePath, allowedDirs)
+          const file = await validatePath(filePath)
           const content = await guard(filePath, () =>
             readText(file, { maxChars: remaining }),
           )
@@ -159,90 +145,14 @@ export function registerFileTools(
     },
   )
 
-  if (explore) {
-    registerTool(
-      'list_directory',
-      {
-        title: 'List Directory',
-        description:
-          'List a directory, one entry per line: directories (first) end in / and ' +
-          'symbolic links in @. recursive includes subdirectories, with names ' +
-          'relative to the directory; .git and node_modules are listed but not ' +
-          'entered. At most 1000 entries; the result says when it stopped, so ' +
-          'list a subdirectory for the rest. To find a file by name anywhere ' +
-          'below a directory, use the file-search tool.' +
-          onlyWithin,
-        inputSchema: z.strictObject({
-          path: pathParam,
-          recursive: z
-            .boolean()
-            .optional()
-            .describe('Also list subdirectories (default false).'),
-        }),
-        annotations: READ_ANNOTATIONS,
-      },
-      async (args) => {
-        const dir = await validatePath(args.path, allowedDirs)
-        return text(
-          await guard(args.path, () =>
-            listDirectory(dir, args.recursive ?? false),
-          ),
-        )
-      },
-    )
-
-    registerTool(
-      'search_files',
-      {
-        title: 'Search Files',
-        description:
-          'Find files and directories by NAME, never by content. Matches a glob ' +
-          "against each entry's path relative to `path` (case-sensitive, dot files " +
-          "included): '*.ts' directly under `path`, '**/*.ts' at any depth. " +
-          'Returns matching paths relative to `path`, one per line, directories ' +
-          'ending in /. .git and node_modules are not entered (a directory with ' +
-          'that name can still match). At most 1000 matches; the result says ' +
-          'when it stopped. To browse a single folder, use the directory-listing tool.' +
-          onlyWithin,
-        inputSchema: z.strictObject({
-          path: pathParam,
-          pattern: z
-            .string()
-            .min(1)
-            .max(500)
-            .describe(
-              "Glob for the entry's path relative to path, for example '**/*.ts' or '**/name'.",
-            ),
-          excludePatterns: z
-            .array(z.string().min(1).max(500))
-            .max(20)
-            .optional()
-            .describe(
-              "Entries to skip, with their contents. Without '*', a name matched at any depth ('dist'); with '*', a glob matched as written, and one ending in '/**' also skips the directory itself.",
-            ),
-        }),
-        annotations: READ_ANNOTATIONS,
-      },
-      async (args) => {
-        const dir = await validatePath(args.path, allowedDirs)
-        return text(
-          await guard(args.path, () =>
-            searchFiles(dir, args.pattern, args.excludePatterns),
-          ),
-        )
-      },
-    )
-  }
-
-  registerTool(
+  server.registerTool(
     'write_file',
     {
       title: 'Write File',
       description:
         'Create a file or completely overwrite one, creating missing parent ' +
         'directories. Overwrites without warning; to change part of a file use ' +
-        'the edit tool.' +
-        onlyWithin,
+        'the edit tool.',
       inputSchema: z.strictObject({
         path: pathParam,
         content: z
@@ -255,7 +165,7 @@ export function registerFileTools(
       },
     },
     async (args) => {
-      const file = await validatePath(args.path, allowedDirs)
+      const file = await validatePath(args.path)
       await guard(args.path, () =>
         withFileLock(file, () => writeFileContent(file, args.content)),
       )
@@ -263,7 +173,7 @@ export function registerFileTools(
     },
   )
 
-  registerTool(
+  server.registerTool(
     'edit_file',
     {
       title: 'Edit File',
@@ -273,8 +183,7 @@ export function registerFileTools(
         'surrounding lines to make it unique) unless replaceAll is set. When ' +
         'there is no exact match, line endings and leading/trailing whitespace ' +
         'on whole lines are ignored. If any edit has no match or an ambiguous ' +
-        'one, nothing is written. Returns a git-style diff.' +
-        onlyWithin,
+        'one, nothing is written. Returns a git-style diff.',
       inputSchema: z.strictObject({
         path: pathParam,
         edits: z
@@ -294,7 +203,7 @@ export function registerFileTools(
       },
     },
     async (args) => {
-      const file = await validatePath(args.path, allowedDirs)
+      const file = await validatePath(args.path)
       return text(
         await guard(args.path, () =>
           withFileLock(file, () =>

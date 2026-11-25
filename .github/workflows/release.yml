@@ -207,7 +207,7 @@ jobs:
           done
           node - <<'JS'
           const { spawn } = require('node:child_process')
-          const child = spawn('./node_modules/.bin/workshop-mcp', ['--no-shell'], {
+          const child = spawn('./node_modules/.bin/workshop-mcp', [], {
             stdio: ['pipe', 'pipe', 'inherit'],
           })
           const send = (message) =>
@@ -228,7 +228,7 @@ jobs:
               } else if (reply.id === 2) {
                 const names = reply.result.tools.map((tool) => tool.name)
                 console.log('tools:', names.join(', '))
-                if (!names.includes('read_file') || names.includes('shell')) {
+                if (!names.includes('read_file') || !names.includes('shell')) {
                   console.error('::error::unexpected tool list ' + names)
                   process.exitCode = 1
                 }

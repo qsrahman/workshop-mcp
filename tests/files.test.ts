@@ -1,15 +1,14 @@
+import { execFileSync } from 'node:child_process'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FS_CALL_TIMEOUT_MS, validatePath } from '../src/paths.js'
+import { validatePath } from '../src/paths.js'
 import {
   friendlyFsError,
-  listDirectory,
   readText,
   readWholeTextFile,
-  searchFiles,
   tailFile,
   withFileLock,
   writeFileContent,
@@ -161,6 +160,34 @@ describe('readText', () => {
     await expect(tailFile(bin, 1)).rejects.toMatchObject({ code: 'EBINARY' })
   })
 
+  // Nothing is restricted, so a model can name a device or a pipe: /dev/zero
+  // has size 0 and would be read without end, and a pipe with no writer never
+  // finishes opening.
+  it.runIf(fsSync.existsSync('/dev/zero'))(
+    'refuses a device instead of reading it without end',
+    async () => {
+      await expect(readText('/dev/zero')).rejects.toMatchObject({
+        code: 'ENOTFILE',
+      })
+      await expect(tailFile('/dev/zero', 1)).rejects.toMatchObject({
+        code: 'ENOTFILE',
+      })
+      await expect(readWholeTextFile('/dev/zero')).rejects.toMatchObject({
+        code: 'ENOTFILE',
+      })
+    },
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'refuses a pipe with no writer without waiting for one',
+    async () => {
+      const fifo = path.join(root, 'pipe')
+      execFileSync('mkfifo', [fifo])
+      await expect(readText(fifo)).rejects.toMatchObject({ code: 'ENOTFILE' })
+    },
+    5000,
+  )
+
   it('refuses text that is not valid UTF-8, such as Latin-1', async () => {
     const f = path.join(root, 'latin1.txt')
     await fs.writeFile(f, Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a])) // "café" in Latin-1
@@ -201,7 +228,11 @@ describe('readText', () => {
     const f = await write('io.txt', 'abc')
     const close = vi.fn(async () => {})
     const open = vi.spyOn(fs, 'open').mockResolvedValue({
-      stat: async () => ({ isDirectory: () => false, size: 3 }),
+      stat: async () => ({
+        isDirectory: () => false,
+        isFile: () => true,
+        size: 3,
+      }),
       read: async () => {
         throw Object.assign(new Error('input/output error'), { code: 'EIO' })
       },
@@ -228,7 +259,7 @@ describe('readText', () => {
     const secret = path.join(outside, 'secret.txt')
     await fs.writeFile(victim, 'safe')
     await fs.writeFile(secret, 'TOP-SECRET')
-    const validated = await validatePath(victim, [root])
+    const validated = await validatePath(victim)
     const original = fs.realpath
     const swap = vi
       .spyOn(fs, 'realpath')
@@ -241,7 +272,7 @@ describe('readText', () => {
         return original(target, ...rest) as never
       })
     try {
-      await expect(validatePath(victim, [root])).resolves.toBe(validated)
+      await expect(validatePath(victim)).resolves.toBe(validated)
     } finally {
       swap.mockRestore()
     }
@@ -266,6 +297,19 @@ describe('tailFile', () => {
     await fs.writeFile(f, lines.join('\n') + '\n')
     expect(await tailFile(f, 3)).toBe(lines.slice(-3).join('\n'))
     expect(await tailFile(f, 50_000, 10_000_000)).toBe(lines.join('\n'))
+  })
+
+  it('returns the end of a last line that is longer than the window it reads', async () => {
+    const f = path.join(root, 'one-line.json')
+    await fs.writeFile(f, '{"a":"' + 'x'.repeat(1_000_000) + '"}')
+    const text = await tailFile(f, 1, 1000)
+    expect(text).toContain('showing only the last 1000 characters')
+    expect(text.endsWith('xxx"}')).toBe(true)
+    await fs.writeFile(f, 'first\n' + 'y'.repeat(1_000_000))
+    const last = await tailFile(f, 1, 1000)
+    expect(last).toContain('showing only the last 1000 characters')
+    expect(last.endsWith('yyy')).toBe(true)
+    expect(last).not.toContain('first')
   })
 
   it('caps a huge tail request at maxChars without reading the whole file', async () => {
@@ -300,10 +344,19 @@ describe('friendlyFsError', () => {
     expect(friendlyFsError(code('EBINARY'), shown).message).toContain(
       'binary file',
     )
+    expect(friendlyFsError(code('ELOOP'), shown).message).toBe(
+      'Refusing to read a symbolic link: src/a.ts',
+    )
+    expect(friendlyFsError(code('ENOTFILE'), shown).message).toBe(
+      'Refusing to read: src/a.ts is not a regular file (it is a device, pipe or socket)',
+    )
+    expect(friendlyFsError(code('ENOTREG'), shown).message).toBe(
+      'Refusing to write: src/a.ts is not a regular file',
+    )
   })
 
   it('passes other errors through unchanged', () => {
-    const error = new Error('Access denied - path outside allowed directories')
+    const error = new Error('Broken symlink (its target does not exist): /x')
     expect(friendlyFsError(error, 'x')).toBe(error)
   })
 })
@@ -362,286 +415,5 @@ describe('withFileLock', () => {
       })
     await Promise.all(Array.from({ length: 10 }, bump))
     expect(await fs.readFile(f, 'utf-8')).toBe('10')
-  })
-})
-
-describe('listDirectory', () => {
-  const make = async (...names: string[]) => {
-    for (const name of names) {
-      const target = path.join(root, name)
-      if (name.endsWith('/')) await fs.mkdir(target, { recursive: true })
-      else {
-        await fs.mkdir(path.dirname(target), { recursive: true })
-        await fs.writeFile(target, 'x')
-      }
-    }
-  }
-
-  it('lists directories first, then files, each sorted, with / on directories', async () => {
-    await make('b.txt', 'a.txt', 'zdir/', 'adir/')
-    expect(await listDirectory(root, false)).toBe('adir/\nzdir/\na.txt\nb.txt')
-  })
-
-  it('says so when a directory is empty', async () => {
-    expect(await listDirectory(root, false)).toBe('(empty)')
-  })
-
-  it('does not look inside subdirectories unless asked', async () => {
-    await make('src/deep/file.ts', 'top.txt')
-    expect(await listDirectory(root, false)).toBe('src/\ntop.txt')
-  })
-
-  it('lists subdirectories breadth first with names relative to the directory', async () => {
-    await make('a/b/c.txt', 'a/x.txt', 'top.txt')
-    expect(await listDirectory(root, true)).toBe(
-      'a/\ntop.txt\na/b/\na/x.txt\na/b/c.txt',
-    )
-  })
-
-  it('marks a symbolic link with @ and never follows it', async () => {
-    await make('real/inside.txt')
-    await fs.symlink(path.join(root, 'real'), path.join(root, 'link'))
-    await fs.symlink(outside, path.join(root, 'out'))
-    await fs.writeFile(path.join(outside, 'secret.txt'), 's')
-    const listing = await listDirectory(root, true)
-    expect(listing).toContain('link@')
-    expect(listing).toContain('out@')
-    expect(listing).not.toContain('secret.txt')
-    expect(listing).not.toContain('link/inside.txt')
-  })
-
-  it('lists node_modules and .git but does not enter them', async () => {
-    await make('node_modules/pkg/index.js', '.git/HEAD', 'src/a.ts')
-    const listing = await listDirectory(root, true)
-    expect(listing).toContain('node_modules/')
-    expect(listing).toContain('.git/')
-    expect(listing).toContain('src/a.ts')
-    expect(listing).not.toContain('pkg')
-    expect(listing).not.toContain('HEAD')
-  })
-
-  it('stops at 1000 entries and says how to see more', async () => {
-    await Promise.all(
-      Array.from({ length: 1005 }, (_, i) =>
-        fs.writeFile(path.join(root, `f${String(i).padStart(4, '0')}.txt`), ''),
-      ),
-    )
-    const lines = (await listDirectory(root, false)).split('\n')
-    expect(lines).toHaveLength(1001)
-    expect(lines[999]).toBe('f0999.txt')
-    expect(lines[1000]).toContain('stopped after 1000 entries')
-  })
-
-  it('keeps the shallow entries when a recursive listing is cut', async () => {
-    await make('a/', 'b/')
-    await Promise.all(
-      Array.from({ length: 1000 }, (_, i) =>
-        fs.writeFile(
-          path.join(root, 'a', `f${String(i).padStart(4, '0')}`),
-          '',
-        ),
-      ),
-    )
-    const lines = (await listDirectory(root, true)).split('\n')
-    expect(lines.slice(0, 2)).toEqual(['a/', 'b/'])
-    expect(lines.at(-1)).toContain('stopped after 1000 entries')
-  })
-
-  it.skipIf(process.getuid?.() === 0)(
-    'notes a subdirectory it cannot read',
-    async () => {
-      await make('open/x.txt', 'locked/y.txt')
-      await fs.chmod(path.join(root, 'locked'), 0)
-      try {
-        const listing = await listDirectory(root, true)
-        expect(listing).toContain('open/x.txt')
-        expect(listing).toContain('[some subdirectories could not be read]')
-      } finally {
-        await fs.chmod(path.join(root, 'locked'), 0o755)
-      }
-    },
-  )
-
-  it('gives up on a directory that never answers, and says so', async () => {
-    vi.useFakeTimers()
-    vi.spyOn(fs, 'readdir').mockReturnValue(new Promise(() => {}) as never)
-    const outcome = listDirectory(root, false).then(
-      () => 'resolved',
-      (error: Error) => error.message,
-    )
-    await vi.advanceTimersByTimeAsync(FS_CALL_TIMEOUT_MS)
-    expect(await outcome).toContain('timed out after 15000 ms: readdir')
-  })
-
-  it('ends a recursive listing with the timeout when a subdirectory stalls', async () => {
-    await make('a/x.txt')
-    const real = fs.readdir.bind(fs)
-    vi.useFakeTimers()
-    vi.spyOn(fs, 'readdir').mockImplementation(((
-      target: string,
-      ...rest: never[]
-    ) =>
-      target.endsWith('a')
-        ? new Promise(() => {})
-        : real(target, ...rest)) as never)
-    const outcome = listDirectory(root, true).then(
-      () => 'resolved',
-      (error: Error) => error.message,
-    )
-    await vi.advanceTimersByTimeAsync(FS_CALL_TIMEOUT_MS)
-    expect(await outcome).toContain('readdir')
-  })
-
-  it('names a file given instead of a directory, and a missing directory', async () => {
-    await make('f.txt')
-    const asFile = await listDirectory(path.join(root, 'f.txt'), false).catch(
-      (error: unknown) => friendlyFsError(error, 'f.txt').message,
-    )
-    expect(asFile).toBe('f.txt is a file, not a directory; read it as a file')
-    const missing = await listDirectory(path.join(root, 'nope'), false).catch(
-      (error: unknown) => friendlyFsError(error, 'nope').message,
-    )
-    expect(missing).toBe('File not found: nope')
-  })
-})
-
-describe('searchFiles', () => {
-  const make = async (...names: string[]) => {
-    for (const name of names) {
-      const target = path.join(root, name)
-      if (name.endsWith('/')) await fs.mkdir(target, { recursive: true })
-      else {
-        await fs.mkdir(path.dirname(target), { recursive: true })
-        await fs.writeFile(target, 'x')
-      }
-    }
-  }
-  const search = (pattern: string, exclude: string[] = []) =>
-    searchFiles(root, pattern, exclude)
-
-  it('matches a glob against the path relative to the directory', async () => {
-    await make('a.ts', 'b.js', 'src/c.ts', 'src/deep/d.ts')
-    expect(await search('*.ts')).toBe('a.ts')
-    expect(await search('**/*.ts')).toBe('a.ts\nsrc/c.ts\nsrc/deep/d.ts')
-    expect(await search('src/*.ts')).toBe('src/c.ts')
-  })
-
-  it('finds directories, with a / on them, and is case-sensitive and dot-aware', async () => {
-    await make('lib/', 'Lib.txt', '.env', 'sub/.hidden')
-    expect(await search('**/lib')).toBe('lib/')
-    expect(await search('**/LIB*')).toBe('No matches found')
-    expect(await search('**/.*')).toBe('.env\nsub/.hidden')
-    // a bare * reaches dot files too
-    expect(await search('*')).toBe('lib/\nsub/\n.env\nLib.txt')
-  })
-
-  it('goes breadth first, so the shallow matches come first', async () => {
-    await make('a/b/hit.txt', 'a/hit.txt', 'hit.txt')
-    expect(await search('**/hit.txt')).toBe('hit.txt\na/hit.txt\na/b/hit.txt')
-  })
-
-  it('never reads inside files', async () => {
-    await fs.writeFile(path.join(root, 'notes.txt'), 'needle')
-    expect(await search('needle')).toBe('No matches found')
-  })
-
-  it('does not enter node_modules or .git, though they can match themselves', async () => {
-    await make('node_modules/pkg/index.js', '.git/HEAD', 'src/index.js')
-    expect(await search('**/index.js')).toBe('src/index.js')
-    expect(await search('**/node_modules')).toBe('node_modules/')
-    expect(await search('**/.git')).toBe('.git/')
-  })
-
-  it('leaves out excluded names at any depth, and their contents', async () => {
-    await make('dist/a.js', 'src/dist/b.js', 'src/c.js', 'dist_old/d.js')
-    expect(await search('**/*.js', ['dist'])).toBe('dist_old/d.js\nsrc/c.js')
-  })
-
-  it('treats an exclude pattern with * as a glob, and /** as including the directory', async () => {
-    await make('build/a.js', 'src/b.js', 'src/gen/c.js')
-    expect(await search('**', ['build/**'])).toBe(
-      'src/\nsrc/gen/\nsrc/b.js\nsrc/gen/c.js',
-    )
-    expect(await search('**/*.js', ['src/gen/**'])).toBe('build/a.js\nsrc/b.js')
-    expect(await search('**/*.js', ['**/gen'])).toBe('build/a.js\nsrc/b.js')
-  })
-
-  it('marks a symbolic link with @ and never follows it', async () => {
-    await fs.writeFile(path.join(outside, 'secret.txt'), 's')
-    await fs.symlink(outside, path.join(root, 'out'))
-    expect(await search('**')).toBe('out@')
-    expect(await search('**/secret.txt')).toBe('No matches found')
-  })
-
-  it('stops at 1000 matches and says how to narrow the search', async () => {
-    await Promise.all(
-      Array.from({ length: 1005 }, (_, i) =>
-        fs.writeFile(path.join(root, `f${String(i).padStart(4, '0')}.txt`), ''),
-      ),
-    )
-    const lines = (await search('*.txt')).split('\n')
-    expect(lines).toHaveLength(1001)
-    expect(lines[999]).toBe('f0999.txt')
-    expect(lines[1000]).toContain('stopped after 1000 matches')
-  })
-
-  it('gives up after looking at too many entries', async () => {
-    await make('a.txt', 'b.txt', 'c.txt', 'd.txt')
-    const result = await searchFiles(root, '*.nomatch', [], 3)
-    expect(result).toContain('stopped after looking at 3 entries')
-    expect(result).toContain('add excludePatterns')
-  })
-
-  it('does not count excluded entries against the limit', async () => {
-    await make('skip/a', 'skip/b', 'skip/c', 'keep.txt')
-    expect(await searchFiles(root, '*.txt', ['skip'], 3)).toBe('keep.txt')
-  })
-
-  it.skipIf(process.getuid?.() === 0)(
-    'finds what it can and says matches in an unreadable directory are missing',
-    async () => {
-      await make('open/x.txt', 'locked/y.txt')
-      await fs.chmod(path.join(root, 'locked'), 0)
-      try {
-        const result = await search('**/*.txt')
-        expect(result).toContain('open/x.txt')
-        expect(result).toContain('some subdirectories could not be read')
-      } finally {
-        await fs.chmod(path.join(root, 'locked'), 0o755)
-      }
-    },
-  )
-
-  it('says so, without hiding the note, when nothing matched in an unreadable tree', async () => {
-    vi.spyOn(fs, 'readdir').mockImplementation(((target: string) =>
-      target === root
-        ? Promise.resolve([
-            { name: 'd', isDirectory: () => true, isSymbolicLink: () => false },
-          ])
-        : Promise.reject(
-            Object.assign(new Error('denied'), { code: 'EACCES' }),
-          )) as never)
-    expect(await search('**/*.txt')).toBe(
-      'No matches found\n[some subdirectories could not be read, so matches inside them are missing]',
-    )
-  })
-
-  it('gives up on a directory that never answers', async () => {
-    vi.useFakeTimers()
-    vi.spyOn(fs, 'readdir').mockReturnValue(new Promise(() => {}) as never)
-    const outcome = search('*').then(
-      () => 'resolved',
-      (error: Error) => error.message,
-    )
-    await vi.advanceTimersByTimeAsync(FS_CALL_TIMEOUT_MS)
-    expect(await outcome).toContain('timed out after 15000 ms: readdir')
-  })
-
-  it('names a file given instead of a directory', async () => {
-    await make('f.txt')
-    const message = await searchFiles(path.join(root, 'f.txt'), '*').catch(
-      (error: unknown) => friendlyFsError(error, 'f.txt').message,
-    )
-    expect(message).toBe('f.txt is a file, not a directory; read it as a file')
   })
 })

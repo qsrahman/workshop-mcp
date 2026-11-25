@@ -381,6 +381,13 @@ export async function applyFileEdits(
     // No exact match: match whole lines ignoring leading and trailing whitespace.
     const oldLines = oldText.split('\n')
     const newLines = newText.split('\n')
+    // Whole lines carry their own line ends, so a final newline is not a blank
+    // line that must follow the match. It is dropped from both sides, so the
+    // replacement does not gain a blank line either.
+    if (oldLines.length > 1 && oldLines.at(-1) === '') {
+      oldLines.pop()
+      if (newLines.length > 1 && newLines.at(-1) === '') newLines.pop()
+    }
     const lines = modified.split('\n')
     const starts = lineMatches(lines, oldLines)
     if (starts.length === 0) {

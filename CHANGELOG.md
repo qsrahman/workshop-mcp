@@ -2,6 +2,29 @@
 
 Versions follow [semver](https://semver.org). Each release's notes on GitHub are taken from the matching section here, and a release tag fails to publish without one.
 
+## [Unreleased]
+
+### Removed (breaking)
+
+The server no longer has modes. It serves the same tools to every client and restricts nothing, so it now relies on where it runs (a restricted user or a container) and on the client's own tool approvals.
+
+- **`--read-only`, `--no-shell` and `--no-fetch`.** The file tools, the shell and `fetch_url` are always served. A client configuration that still passes one of them makes the server exit with status 1 and print the usage, instead of starting with more access than it asked for: remove the argument.
+- **Directory arguments.** `workshop-mcp /path/to/dir` no longer limits the file tools; any argument that is not an option is now an error (exit 1). Paths always resolve against the working directory, and `~` still expands to the home directory.
+- **`list_directory` and `search_files`.** They were offered only when the shell was off, so they are gone with the modes. With the shell on, `ls` and `find` do the same job, as before. The `minimatch` dependency goes with them.
+- Errors such as `Access denied - path outside allowed directories` can no longer happen. A NUL character in a path now reports `Invalid path: it contains a NUL character`.
+
+### Added
+
+- `--help` (`-h`) prints the options and `--version` (`-v`) prints the version, each on stdout with exit status 0. They are answered before any directory is looked at, and nothing is served. Before, both were errors like any unknown option.
+
+### Fixed
+
+- `read_file`, `read_multiple_files` and `edit_file` refuse anything that is not a regular file (a device, a pipe or a socket). `/dev/zero` used to be read without end, using hundreds of megabytes in seconds, and a pipe with no writer made the call wait for ever.
+- `read_file` with `tail` on a file whose last line is longer than about 400 KB, such as minified JSON, returned nothing. It now returns the end of that line, with the usual note that only the last characters are shown.
+- `edit_file`: when `oldText` ends in a newline and the file's indentation differs, the whitespace-tolerant match no longer fails because the next line is not blank.
+- The package description on npm no longer mentions switches to restrict the server, which no longer exist.
+- `fetch_url`: on a page that is not article-shaped, images are now made absolute as well as links, so their URLs can be followed.
+
 ## [0.6.6] - 2026-11-24
 
 ### Fixed

@@ -231,16 +231,20 @@ async function htmlToMarkdown(html: string, pageUrl: string): Promise<string> {
     // Not article-shaped (an index, a landing page): take the whole body instead.
     const fallback = parse()
     // Turndown reads the DOM as it is and ignores a base element, so the links
-    // are made absolute here.
-    for (const anchor of fallback.querySelectorAll('a[href]')) {
-      const href = anchor.getAttribute('href')
-      if (!href) continue
-      try {
-        anchor.setAttribute('href', new URL(href, pageUrl).href)
-      } catch {
-        // Leave an unparseable href as the page wrote it.
+    // and images are made absolute here.
+    const absolutize = (selector: string, attribute: string) => {
+      for (const element of fallback.querySelectorAll(selector)) {
+        const value = element.getAttribute(attribute)
+        if (!value) continue
+        try {
+          element.setAttribute(attribute, new URL(value, pageUrl).href)
+        } catch {
+          // Leave an unparseable URL as the page wrote it.
+        }
       }
     }
+    absolutize('a[href]', 'href')
+    absolutize('img[src]', 'src')
     markdown = turndown.turndown(fallback.body?.innerHTML ?? '').trim()
   }
   if (!markdown) {

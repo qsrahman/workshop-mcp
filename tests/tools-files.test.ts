@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Client } from '@modelcontextprotocol/client'
@@ -7,7 +6,7 @@ import { callError, connect, dir } from './harness.js'
 
 describe('edit_file arguments', () => {
   it('rejects an empty edits list at the schema and leaves the file alone', async () => {
-    const client = await connect(false)
+    const client = await connect()
     const file = path.join(dir, 'note.txt')
     const result = await client
       .callTool({ name: 'edit_file', arguments: { path: file, edits: [] } })
@@ -17,7 +16,7 @@ describe('edit_file arguments', () => {
   })
 
   it('shows the path the client sent in the diff, not the resolved one', async () => {
-    const client = await connect(false)
+    const client = await connect()
     const result = await client.callTool({
       name: 'edit_file',
       arguments: {
@@ -34,7 +33,7 @@ describe('edit_file arguments', () => {
 
 describe('read_multiple_files budget', () => {
   it('cuts a file that does not fit in the shared budget, with where to continue', async () => {
-    const client = await connect(false)
+    const client = await connect()
     const row = 'x'.repeat(99) + '\n'
     await fs.writeFile(path.join(dir, 'one.txt'), row.repeat(1500)) // 150,000 chars
     await fs.writeFile(path.join(dir, 'two.txt'), row.repeat(1500))
@@ -57,7 +56,7 @@ describe('read_multiple_files budget', () => {
 
 describe('read_multiple_files, once the budget is used up', () => {
   it('skips the remaining files and says how to read them', async () => {
-    const client = await connect(false)
+    const client = await connect()
     // exactly the call's 200,000-character budget: nothing is left for note.txt
     await fs.writeFile(
       path.join(dir, 'big.txt'),
@@ -77,132 +76,9 @@ describe('read_multiple_files, once the budget is used up', () => {
   })
 })
 
-describe('list_directory', () => {
-  const list = async (args: Record<string, unknown>) => {
-    const client = await connect(false)
-    const result = await client.callTool({
-      name: 'list_directory',
-      arguments: args,
-    })
-    return {
-      isError: result.isError,
-      text: (result.content as Array<{ text: string }>)[0].text,
-    }
-  }
-
-  it('lists a directory, and a subdirectory by relative path', async () => {
-    await fs.mkdir(path.join(dir, 'sub'))
-    await fs.writeFile(path.join(dir, 'sub', 'inner.txt'), 'x')
-    expect((await list({ path: dir })).text).toBe('sub/\nnote.txt')
-    expect((await list({ path: 'sub' })).text).toBe('inner.txt')
-  })
-
-  it('lists recursively when asked', async () => {
-    await fs.mkdir(path.join(dir, 'sub'))
-    await fs.writeFile(path.join(dir, 'sub', 'inner.txt'), 'x')
-    expect((await list({ path: dir, recursive: true })).text).toBe(
-      'sub/\nnote.txt\nsub/inner.txt',
-    )
-  })
-
-  it('refuses a directory outside the allowed ones, and a link that leads there', async () => {
-    const outside = await fs.realpath(
-      await fs.mkdtemp(path.join(os.tmpdir(), 'ls-out-')),
-    )
-    try {
-      await fs.symlink(outside, path.join(dir, 'escape'))
-      for (const target of ['/etc', '..', path.join(dir, 'escape')]) {
-        const result = await list({ path: target })
-        expect(result.isError, target).toBe(true)
-        expect(result.text, target).toContain('Access denied')
-      }
-    } finally {
-      await fs.rm(outside, { recursive: true, force: true })
-    }
-  })
-
-  it('says what is wrong when the path is a file or missing', async () => {
-    const file = await list({ path: 'note.txt' })
-    expect(file.isError).toBe(true)
-    expect(file.text).toBe(
-      'note.txt is a file, not a directory; read it as a file',
-    )
-    expect((await list({ path: 'nope' })).isError).toBe(true)
-  })
-})
-
-describe('search_files', () => {
-  const search = async (args: Record<string, unknown>) => {
-    const client = await connect(false)
-    const result = await client.callTool({
-      name: 'search_files',
-      arguments: args,
-    })
-    return {
-      isError: result.isError,
-      text: (result.content as Array<{ text: string }>)[0].text,
-    }
-  }
-
-  it('finds files by name under a directory, relative to it', async () => {
-    await fs.mkdir(path.join(dir, 'src/deep'), { recursive: true })
-    await fs.writeFile(path.join(dir, 'src/deep/a.ts'), 'x')
-    await fs.writeFile(path.join(dir, 'src/b.ts'), 'x')
-    expect((await search({ path: dir, pattern: '**/*.ts' })).text).toBe(
-      'src/b.ts\nsrc/deep/a.ts',
-    )
-    expect((await search({ path: 'src', pattern: '*.ts' })).text).toBe('b.ts')
-  })
-
-  it('takes exclude patterns', async () => {
-    await fs.mkdir(path.join(dir, 'dist'))
-    await fs.writeFile(path.join(dir, 'dist/a.js'), 'x')
-    await fs.writeFile(path.join(dir, 'b.js'), 'x')
-    const result = await search({
-      path: dir,
-      pattern: '**/*.js',
-      excludePatterns: ['dist'],
-    })
-    expect(result.text).toBe('b.js')
-  })
-
-  it('says when nothing matches', async () => {
-    expect((await search({ path: dir, pattern: '*.nope' })).text).toBe(
-      'No matches found',
-    )
-  })
-
-  it('refuses a directory outside the allowed ones, and a link that leads there', async () => {
-    const outside = await fs.realpath(
-      await fs.mkdtemp(path.join(os.tmpdir(), 'search-out-')),
-    )
-    try {
-      await fs.symlink(outside, path.join(dir, 'escape'))
-      for (const target of ['/etc', '..', path.join(dir, 'escape')]) {
-        const result = await search({ path: target, pattern: '*' })
-        expect(result.isError, target).toBe(true)
-        expect(result.text, target).toContain('Access denied')
-      }
-    } finally {
-      await fs.rm(outside, { recursive: true, force: true })
-    }
-  })
-
-  it('rejects a missing pattern, an empty one and an unknown argument', async () => {
-    for (const args of [
-      { path: dir },
-      { path: dir, pattern: '' },
-      { path: dir, pattern: '*', glob: 'x' },
-      { path: dir, pattern: '*', excludePatterns: 'dist' },
-    ]) {
-      expect((await search(args)).isError, JSON.stringify(args)).toBe(true)
-    }
-  })
-})
-
 describe('read_file tail', () => {
   it('returns the last lines through the tool', async () => {
-    const client = await connect(false)
+    const client = await connect()
     await fs.writeFile(path.join(dir, 'lines.txt'), 'a\nb\nc\nd\n')
     const result = await client.callTool({
       name: 'read_file',
@@ -214,7 +90,7 @@ describe('read_file tail', () => {
 
 describe('write_file', () => {
   it('creates missing parent directories', async () => {
-    const client = await connect(false)
+    const client = await connect()
     const result = await client.callTool({
       name: 'write_file',
       arguments: { path: path.join(dir, 'new', 'deep', 'f.ts'), content: 'x' },
@@ -225,8 +101,8 @@ describe('write_file', () => {
     )
   })
 
-  it('creates them relative to the first allowed directory', async () => {
-    const client = await connect(false)
+  it('creates them relative to the working directory', async () => {
+    const client = await connect()
     await client.callTool({
       name: 'write_file',
       arguments: { path: 'rel/dir/g.ts', content: 'y' },
@@ -235,7 +111,7 @@ describe('write_file', () => {
   })
 
   it("names the caller's path when refusing a directory", async () => {
-    const client = await connect(false)
+    const client = await connect()
     await fs.mkdir(path.join(dir, 'sub'))
     const message = await callError(client, 'write_file', {
       path: 'sub',
@@ -243,29 +119,6 @@ describe('write_file', () => {
     })
     expect(message).toBe('Refusing to write: sub is not a regular file')
     expect(message).not.toContain(dir)
-  })
-
-  it('creates nothing when the path leaves the allowed directories', async () => {
-    const client = await connect(false)
-    const outside = await fs.realpath(
-      await fs.mkdtemp(path.join(os.tmpdir(), 'fs-mcp-x-')),
-    )
-    try {
-      await fs.symlink(outside, path.join(dir, 'out'))
-      const viaLink = await callError(client, 'write_file', {
-        path: path.join(dir, 'out', 'a', 'b.txt'),
-        content: 'bad',
-      })
-      expect(viaLink).toContain('Access denied')
-      const traversal = await callError(client, 'write_file', {
-        path: path.join(dir, '..', 'fs-mcp-escape', 'b.txt'),
-        content: 'bad',
-      })
-      expect(traversal).toContain('Access denied')
-      expect(await fs.readdir(outside)).toEqual([])
-    } finally {
-      await fs.rm(outside, { recursive: true, force: true })
-    }
   })
 })
 
@@ -279,7 +132,7 @@ describe('read_file for agents', () => {
   }
 
   it('reads a range with offset and limit', async () => {
-    const client = await connect(false)
+    const client = await connect()
     await fs.writeFile(
       path.join(dir, 'ten.txt'),
       Array.from({ length: 10 }, (_, i) => `l${i + 1}`).join('\n') + '\n',
@@ -295,7 +148,7 @@ describe('read_file for agents', () => {
   })
 
   it('caps a long file and says where to continue', async () => {
-    const client = await connect(false)
+    const client = await connect()
     await fs.writeFile(
       path.join(dir, 'long.txt'),
       ('y'.repeat(79) + '\n').repeat(5000),
@@ -306,7 +159,7 @@ describe('read_file for agents', () => {
   })
 
   it('rejects combining head, tail and offset/limit', async () => {
-    const client = await connect(false)
+    const client = await connect()
     const file = path.join(dir, 'note.txt')
     for (const extra of [
       { head: 1, offset: 1 },
@@ -318,7 +171,7 @@ describe('read_file for agents', () => {
   })
 
   it("explains a directory, a missing file and a binary file in the caller's words", async () => {
-    const client = await connect(false)
+    const client = await connect()
     await fs.mkdir(path.join(dir, 'sub'))
     await fs.writeFile(path.join(dir, 'blob.bin'), Buffer.from([1, 0, 2, 0, 3]))
     expect((await read(client, { path: 'sub' })).text).toBe(
@@ -338,7 +191,7 @@ describe('edit_file ambiguity', () => {
     client.callTool({ name: 'edit_file', arguments: args })
 
   it('refuses an oldText that matches several places and writes nothing', async () => {
-    const client = await connect(false)
+    const client = await connect()
     const file = path.join(dir, 'dup.txt')
     await fs.writeFile(file, 'a=1\nb=1\na=1\n')
     const result = await call(client, {
@@ -353,7 +206,7 @@ describe('edit_file ambiguity', () => {
   })
 
   it("names the caller's path when refusing a binary file", async () => {
-    const client = await connect(false)
+    const client = await connect()
     await fs.writeFile(path.join(dir, 'blob.bin'), Buffer.from([0xff]))
     const message = await callError(client, 'edit_file', {
       path: 'blob.bin',
@@ -366,7 +219,7 @@ describe('edit_file ambiguity', () => {
   })
 
   it('replaces every match with replaceAll', async () => {
-    const client = await connect(false)
+    const client = await connect()
     const file = path.join(dir, 'dup.txt')
     await fs.writeFile(file, 'a=1\nb=1\na=1\n')
     const result = await call(client, {
@@ -380,7 +233,7 @@ describe('edit_file ambiguity', () => {
 
 describe('concurrent calls', () => {
   it('applies parallel edits to different lines of one file without losing any', async () => {
-    const client = await connect(false)
+    const client = await connect()
     const file = path.join(dir, 'parallel.txt')
     for (let round = 0; round < 10; round++) {
       await fs.writeFile(file, 'a\nb\nc\nd\n'.repeat(20))

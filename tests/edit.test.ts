@@ -79,6 +79,26 @@ describe('applyFileEdits', () => {
   })
 })
 
+describe('a trailing newline in oldText, with indentation that differs', () => {
+  const apply = async (oldText: string, newText: string) => {
+    const f = path.join(root, 'nl.txt')
+    await fs.writeFile(f, '  foo\n  bar\n  baz\n')
+    await applyFileEdits(f, [{ oldText, newText }])
+    return fs.readFile(f, 'utf-8')
+  }
+
+  it('matches whole lines, whether or not it ends the text', async () => {
+    expect(await apply('foo\nbar', 'x')).toBe('  x\n  baz\n')
+    expect(await apply('foo\nbar\n', 'x\n')).toBe('  x\n  baz\n')
+    expect(await apply('foo\nbar\n', 'x')).toBe('  x\n  baz\n')
+    expect(await apply('bar\nbaz\n', 'x\n')).toBe('  foo\n  x\n')
+  })
+
+  it('matches one line with its newline', async () => {
+    expect(await apply('bar\n', 'qux\n')).toBe('  foo\n  qux\n  baz\n')
+  })
+})
+
 describe('edit_file no-match error', () => {
   const edit = async (
     content: string,

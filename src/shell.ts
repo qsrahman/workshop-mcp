@@ -1,5 +1,5 @@
 // Runs a shell command for the shell tool. Ported from tiny-code's shell tool.
-// The command itself is NOT confined to the allowed directories; see README.
+// Nothing confines the command; see the security model in the README.
 import { stripVTControlCharacters } from 'node:util'
 import { execa } from 'execa'
 
