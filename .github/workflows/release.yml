@@ -166,7 +166,7 @@ jobs:
     if: github.event_name == 'push'
     needs: [verify, publish]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30 # up to 10 waiting for the version, 10 for the install, 3 for the attestation
     permissions:
       contents: read
     steps:
@@ -181,10 +181,11 @@ jobs:
         run: |
           set -eu
           pkg="@qsrahman/workshop-mcp@$VERSION"
-          # the registry can take a little while to serve a new version
-          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+          # npm says a new version "may take a few minutes to become available";
+          # 0.8.0 took about nine. Wait up to ten before calling it a failure.
+          for attempt in $(seq 1 40); do
             npm view "$pkg" version > /dev/null 2>&1 && break
-            [ "$attempt" = 12 ] && { echo "::error::$pkg is not on the registry"; exit 1; }
+            [ "$attempt" = 40 ] && { echo "::error::$pkg is not on the registry"; exit 1; }
             sleep 15
           done
           dir=$(mktemp -d)
