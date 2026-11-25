@@ -116,20 +116,95 @@ npx fetches the [published package](https://www.npmjs.com/package/@qsrahman/work
 - From source (needs [pnpm](https://pnpm.io)): `pnpm install && pnpm build`, then `node dist/index.js [options] [dir ...]`.
 - A local build as a package: `pnpm pack`, then `npx -y --package ./qsrahman-workshop-mcp-*.tgz workshop-mcp`.
 
-### Options
+### Configuration
 
-| Option                | Effect                                                                                                                                       |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--no-shell`          | Do not serve the `shell` tool. It is on by default.                                                                                          |
-| `--read-only`         | Serve only tools annotated `readOnlyHint: true`: the read tools, `fetch_url` and `brave_web_search`. Writing, editing and the shell are absent. |
-| `--no-fetch`          | Do not serve `fetch_url`. It is on by default.                                                                                               |
-| `--allow-private-ips` | Let `fetch_url` reach private, loopback and link-local addresses (a local dev server). Refused by default.                                   |
-| `--ignore-robots-txt` | Do not consult `robots.txt` before fetching a page.                                                                                          |
-| `--allowed-hosts`     | Limit `fetch_url` to these hosts: a comma-separated list (or repeat the option) of exact hosts and `*.domain` entries.                       |
-| `<directory> ...`     | Optional. Limit the file tools to these directories (and the shell's starting directory). Use absolute paths. With none, nothing is limited. |
-| `--`                  | Ends the options, so a directory that starts with `--` can follow.                                                                           |
+workshop-mcp has **no configuration file**. Everything is set by command-line arguments and one environment variable. In an MCP client both go in the server's entry: the arguments in `args`, the variable in `env` (see [Connect a client](#connect-a-client)).
 
-An unrecognised option is an error and the server exits (a mistyped `--read-only` or `--no-shell` would otherwise start it with more access than you asked for). A listed directory that does not exist is skipped with a warning; if every listed directory is unusable the server exits, it does not become unrestricted.
+#### Command line
+
+```text
+workshop-mcp [options] [directory ...]
+```
+
+| Option                    | Default                  | Effect                                                                                                                                                                                                                                                                                                |
+| ------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--no-shell`              | the shell is on          | Do not serve `shell`. Because the shell's `ls` and `find` no longer cover it, `list_directory` and `search_files` are offered instead.                                                                                                                                                                |
+| `--read-only`             | writing is on            | Serve only tools annotated `readOnlyHint: true`: `read_file`, `read_multiple_files`, `list_directory`, `search_files`, `fetch_url` and, with a key, `brave_web_search`. `write_file`, `edit_file` and `shell` are absent from `tools/list`. It makes `--no-shell` redundant: the shell is never served. |
+| `--no-fetch`              | `fetch_url` is on        | Do not serve `fetch_url`. The three fetch options below then do nothing, though their values are still checked.                                                                                                                                                                                       |
+| `--allow-private-ips`     | private addresses refused | Let `fetch_url` reach loopback, private, link-local and other non-public addresses, such as a local dev server.                                                                                                                                                                                      |
+| `--ignore-robots-txt`     | `robots.txt` is obeyed   | Do not consult `robots.txt` before fetching a page.                                                                                                                                                                                                                                                   |
+| `--allowed-hosts <hosts>` | any public host          | Limit `fetch_url` to these hosts, for every request including `robots.txt` and redirects. See below.                                                                                                                                                                                                  |
+| `<directory> ...`         | no limit                 | Limit the file tools, and the shell's starting directory, to these directories. See below.                                                                                                                                                                                                            |
+| `--`                      |                          | Ends the options, so a directory whose name starts with `-` can follow.                                                                                                                                                                                                                               |
+
+**`--allowed-hosts`** takes a comma-separated list, and can be repeated: `--allowed-hosts a.com,*.b.org` and `--allowed-hosts a.com --allowed-hosts '*.b.org'` are the same, and so is the `--allowed-hosts=a.com` form. Each entry is an exact host name or IP address (`docs.example.com`, `192.0.2.7`), or `*.domain`, which matches a subdomain at any depth but not the domain itself (`*.example.com` allows `docs.example.com` and `a.b.example.com`, not `example.com`). No scheme, port, path or other wildcard: `https://a.com` or `a.com:8080` is an error. Empty entries are ignored. Quote `*.domain` in a shell, which would otherwise expand it.
+
+**Directories** are absolute paths. A relative path is resolved against the server's working directory, which for a GUI client is often not the one you expect. The server does not expand `~`: a shell does that on a command line, but a JSON client config does not, so write the full path there. A directory that cannot be opened is skipped with a warning on stderr; if none can be, the server exits with status 1 and never falls back to being unrestricted. See [Limiting file access to directories](#limiting-file-access-to-directories-optional).
+
+**Mistakes are errors.** An unknown option, such as `--readonly`, `--help` or `--version`, makes the server print the usage on stderr and exit with status 1, since a mistyped security flag must not start it with more access than you asked for. Flags take no value: `--read-only=true` is an error. An invalid `--allowed-hosts` entry is an error too, even with `--no-fetch`.
+
+On startup the server writes one line to stderr saying what it started with, for example `workshop-mcp running on stdio (read-only). File access is not restricted.`
+
+**Which tools each setup serves:**
+
+| Setup                                    | Tools                                                                                                |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| default                                  | `read_file`, `read_multiple_files`, `write_file`, `edit_file`, `shell`, `fetch_url`                  |
+| `--no-shell`                             | `read_file`, `read_multiple_files`, `list_directory`, `search_files`, `write_file`, `edit_file`, `fetch_url` |
+| `--read-only`                            | `read_file`, `read_multiple_files`, `list_directory`, `search_files`, `fetch_url`                    |
+| any of these with `--no-fetch`           | the same, without `fetch_url`                                                                        |
+| any of these with `BRAVE_API_KEY` set    | the same, plus `brave_web_search`                                                                    |
+
+#### Environment variable
+
+| Variable        | Default        | Effect                                                                                                                                                                                                                                                       |
+| --------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BRAVE_API_KEY` | unset: no search | A [Brave Search API](https://brave.com/search/api/) key. When set, the server also serves `brave_web_search`. Surrounding whitespace is trimmed, and a blank value counts as unset. It is read only from the environment, never from an option, because a command line shows in process listings. The shell tool does not pass it on to commands. |
+
+#### Examples
+
+On a command line:
+
+```bash
+# Defaults: every tool except web search, no directory limit
+workshop-mcp
+
+# Read and search one project, change nothing
+workshop-mcp --read-only /home/me/project
+
+# Edit two projects; no shell and no web access, so nothing leaves them
+workshop-mcp --no-shell --no-fetch /home/me/project-a /home/me/project-b
+
+# Fetch pages from a few documentation sites only
+workshop-mcp --allowed-hosts docs.python.org,'*.mozilla.org'
+
+# Let the model read your own dev server (and nothing else on the network)
+workshop-mcp --allow-private-ips --allowed-hosts localhost
+
+# Add web search
+BRAVE_API_KEY=YOUR_KEY workshop-mcp
+```
+
+The same in a client's JSON configuration, with the arguments in `args` and the key in `env`:
+
+```json
+{
+  "mcpServers": {
+    "workshop": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@qsrahman/workshop-mcp",
+        "--no-shell",
+        "--allowed-hosts",
+        "docs.python.org,*.mozilla.org",
+        "/home/me/project"
+      ],
+      "env": { "BRAVE_API_KEY": "YOUR_KEY" }
+    }
+  }
+}
+```
 
 ### Connect a client
 
