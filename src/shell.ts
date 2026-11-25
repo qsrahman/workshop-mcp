@@ -3,7 +3,7 @@
 import { stripVTControlCharacters } from 'node:util'
 import { execa } from 'execa'
 
-export const DEFAULT_TIMEOUT_MS = 30_000
+export const DEFAULT_COMMAND_TIMEOUT_MS = 30_000
 // execa's buffer cap: an oversized `cat` is why output is capped at all.
 const MAX_BUFFER_CHARS = 10 * 1024 * 1024
 const FORCE_KILL_DELAY_MS = 1_000
@@ -54,7 +54,7 @@ export function formatResult(result: CommandResult): string {
 export async function runShell(
   command: string,
   cwd: string,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  timeoutMs: number = DEFAULT_COMMAND_TIMEOUT_MS,
   signal?: AbortSignal,
 ): Promise<CommandResult> {
   const result = await execa(command, {

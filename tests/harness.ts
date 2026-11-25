@@ -57,6 +57,19 @@ export async function connectTo(
 /** The usual test server: nothing turned on or off. */
 export const connect = (mode?: 'auto' | 'legacy') => connectTo({}, mode)
 
+/** Calls a tool and returns whether it failed, with the text of its first block. */
+export const callTool = async (
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+) => {
+  const result = await client.callTool({ name, arguments: args })
+  return {
+    isError: result.isError,
+    text: (result.content as Array<{ text: string }>)[0].text,
+  }
+}
+
 export const callError = async (
   client: Client,
   name: string,

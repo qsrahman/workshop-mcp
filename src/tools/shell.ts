@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 import { validatePath } from '../paths.js'
-import { DEFAULT_TIMEOUT_MS, formatResult, runShell } from '../shell.js'
+import { DEFAULT_COMMAND_TIMEOUT_MS, formatResult, runShell } from '../shell.js'
 import { text } from './common.js'
 
 // The largest timeout execa accepts (a 32-bit setTimeout delay, about 24.8 days).
@@ -43,7 +43,7 @@ export function registerShellTool(server: McpServer) {
           .max(MAX_TIMEOUT_MS)
           .optional()
           .describe(
-            `Kill the command after this many milliseconds (at most ${MAX_TIMEOUT_MS}). Defaults to ${DEFAULT_TIMEOUT_MS}; 0 disables the timeout.`,
+            `Kill the command after this many milliseconds (at most ${MAX_TIMEOUT_MS}). Defaults to ${DEFAULT_COMMAND_TIMEOUT_MS}; 0 disables the timeout.`,
           ),
       }),
       annotations: {

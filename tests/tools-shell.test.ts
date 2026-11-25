@@ -2,14 +2,11 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Client } from '@modelcontextprotocol/client'
-import { connect, dir, names } from './harness.js'
+import { callTool, connect, dir, names } from './harness.js'
 
 describe('shell tool', () => {
-  const callShell = async (client: Client, args: Record<string, unknown>) => {
-    const result = await client.callTool({ name: 'shell', arguments: args })
-    const block = (result.content as Array<{ type: string; text: string }>)[0]
-    return { isError: result.isError, text: block.text }
-  }
+  const callShell = (client: Client, args: Record<string, unknown>) =>
+    callTool(client, 'shell', args)
 
   it('is always served', async () => {
     expect(await names(await connect())).toContain('shell')

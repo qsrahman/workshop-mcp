@@ -22,7 +22,7 @@ const webBody = (results: object[], extra: object = {}) => ({
   ...extra,
 })
 
-describe('brave_web_search requests', () => {
+describe('web_search requests', () => {
   it('sends the key in a header, never in the URL, and asks for plain web results', async () => {
     fake.replies.push({ body: webBody([]) })
     await brave.web({ query: 'node streams' })
@@ -72,7 +72,7 @@ describe('brave_web_search requests', () => {
   })
 })
 
-describe('brave_web_search results', () => {
+describe('web_search results', () => {
   it('lists title, source, age, URL and description, numbered', async () => {
     fake.replies.push({
       body: webBody([

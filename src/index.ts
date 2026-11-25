@@ -55,7 +55,7 @@ Options:
 
 The server is not restricted to any directory and always serves the file
 tools, the shell and fetch_url. BRAVE_API_KEY in the environment turns on the
-brave_web_search tool.`
+web_search tool.`
 
 /**
  * Everything the server is started with, from the command line and the
@@ -63,35 +63,30 @@ brave_web_search tool.`
  * unusable; `main` turns that into exit code 1.
  */
 export function resolveConfig(argv: string[], env: NodeJS.ProcessEnv) {
-  const { fetch } = parseArgs(argv)
   // The key comes from the environment, not an option, so it never shows up in
   // a process listing. Without one, the web search tool is not offered.
   const apiKey = env.BRAVE_API_KEY?.trim()
-  return { fetch, brave: apiKey ? { apiKey } : undefined }
+  return { ...parseArgs(argv), brave: apiKey ? { apiKey } : undefined }
 }
 
 function main() {
   const argv = process.argv.slice(2)
   let config: ReturnType<typeof resolveConfig>
   try {
-    // Answered before anything is served. This is the one place that writes to
-    // stdout, which is otherwise the protocol.
-    const asked = parseArgs(argv)
-    if (asked.help) {
-      process.stdout.write(`${HELP}\n`)
-      return
-    }
-    if (asked.version) {
-      process.stdout.write(`${version}\n`)
-      return
-    }
     config = resolveConfig(argv, process.env)
   } catch (error) {
     console.error(`${(error as Error).message}\n${USAGE}`)
     process.exit(1)
   }
 
-  serveStdio(() => createServer(config), {
+  // Answered before anything is served. This is the one place that writes to
+  // stdout, which is otherwise the protocol.
+  if (config.help || config.version) {
+    process.stdout.write(`${config.help ? HELP : version}\n`)
+    return
+  }
+
+  serveStdio(() => createServer({ fetch: config.fetch, brave: config.brave }), {
     onerror: (error) => {
       console.error('Transport error:', error)
       process.exitCode = 1

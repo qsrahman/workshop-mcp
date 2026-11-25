@@ -2,6 +2,16 @@
 
 Versions follow [semver](https://semver.org). Each release's notes on GitHub are taken from the matching section here, and a release tag fails to publish without one.
 
+## [Unreleased]
+
+### Changed (breaking)
+
+- The search tool is renamed from `brave_web_search` to `web_search`. Its parameters and results are unchanged, and it is still offered only when `BRAVE_API_KEY` is set. A client configuration that names the tool, such as an allow or deny rule for `mcp__workshop__brave_web_search`, must use the new name.
+
+### Fixed
+
+- `fetch_url`: `robots.txt` is decoded with its own content type, as plain text unless the server says otherwise. A comment such as `# <meta charset=utf-16le>` in it used to make the rules decode as garbage, so a Disallow was ignored and the page was fetched.
+
 ## [0.7.0] - 2026-11-25
 
 ### Removed (breaking)

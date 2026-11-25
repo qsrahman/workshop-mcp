@@ -21,6 +21,12 @@ describe('resolveConfig', () => {
     })
   })
 
+  it('passes --help and --version through', () => {
+    expect(resolveConfig([], {})).toMatchObject({ help: false, version: false })
+    expect(resolveConfig(['-h'], {})).toMatchObject({ help: true })
+    expect(resolveConfig(['-v'], {})).toMatchObject({ version: true })
+  })
+
   it('throws on an unknown option', () => {
     expect(() => resolveConfig(['--readonly'], {})).toThrow('Unknown option')
   })

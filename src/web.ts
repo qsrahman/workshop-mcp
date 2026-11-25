@@ -21,7 +21,7 @@ class FetchFailure extends Error {
   override name = 'FetchFailure'
 }
 
-export const DEFAULT_TIMEOUT_MS = 30_000
+export const DEFAULT_FETCH_TIMEOUT_MS = 30_000
 export const DEFAULT_MAX_LENGTH = 20_000
 const MAX_MAX_LENGTH = 100_000
 
@@ -76,7 +76,7 @@ export const fetchUrlInput = z.strictObject({
     .max(120_000)
     .optional()
     .describe(
-      `Wait limit per request, redirects included, in milliseconds, 1000-120000 (default ${DEFAULT_TIMEOUT_MS}).`,
+      `Wait limit per request, redirects included, in milliseconds, 1000-120000 (default ${DEFAULT_FETCH_TIMEOUT_MS}).`,
     ),
 })
 
@@ -319,7 +319,13 @@ export function createWebFetcher(options: WebFetcherOptions) {
       )
     }
     if (status >= 400) return
-    const rules = robotsParser(robotsUrl, decodeBody('', response.body))
+    const rules = robotsParser(
+      robotsUrl,
+      decodeBody(
+        String(response.headers['content-type'] ?? 'text/plain'),
+        response.body,
+      ),
+    )
     const allowed =
       rules.isAllowed(url.href, options.userAgent) !== false &&
       rules.isAllowed(resolvedPathUrl(url), options.userAgent) !== false
@@ -396,7 +402,7 @@ export function createWebFetcher(options: WebFetcherOptions) {
       url: string,
       {
         raw = false,
-        timeoutMs = DEFAULT_TIMEOUT_MS,
+        timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
         signal,
       }: { raw?: boolean; timeoutMs?: number; signal?: AbortSignal } = {},
     ): Promise<Page> {

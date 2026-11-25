@@ -75,9 +75,9 @@ export function registerSearchTools(
 ) {
   const brave = createBrave(braveOptions)
   server.registerTool(
-    'brave_web_search',
+    'web_search',
     {
-      title: 'Brave Web Search',
+      title: 'Web Search',
       description:
         'Search the web with Brave Search; returns the top results with title, URL, age and description, not the pages themselves (read one with the URL-fetching tool). ' +
         'Use it for current information, facts, documentation and anything not in the files. ' +

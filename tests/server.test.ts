@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Client } from '@modelcontextprotocol/client'
 import { MAX_TOOL_INPUT_ELEMENTS } from '../src/server.js'
-import { connect, connectTo, dir, names } from './harness.js'
+import { callTool, connect, connectTo, dir, names } from './harness.js'
 
 describe('tools', () => {
   it('lists the file tools, the shell and fetch_url', async () => {
@@ -222,22 +222,10 @@ describe('what the server advertises to agents', () => {
 })
 
 describe('misspelled arguments', () => {
-  const call = async (
-    client: Client,
-    name: string,
-    args: Record<string, unknown>,
-  ) => {
-    const result = await client.callTool({ name, arguments: args })
-    return {
-      isError: result.isError,
-      text: (result.content as Array<{ text: string }>)[0].text,
-    }
-  }
-
   it('fail with the unknown names instead of being ignored', async () => {
     const client = await connect()
     const file = path.join(dir, 'note.txt')
-    const read = await call(client, 'read_file', {
+    const read = await callTool(client, 'read_file', {
       path: file,
       start_line: 2,
       max_lines: 3,
@@ -249,7 +237,7 @@ describe('misspelled arguments', () => {
   it('also catches a misspelling inside an edit', async () => {
     const client = await connect()
     const file = path.join(dir, 'note.txt')
-    const edit = await call(client, 'edit_file', {
+    const edit = await callTool(client, 'edit_file', {
       path: file,
       edits: [{ oldText: 'original', newText: 'changed', replace_all: true }],
     })
@@ -261,7 +249,7 @@ describe('misspelled arguments', () => {
   it('does not write a file when its content argument is misspelled', async () => {
     const client = await connect()
     const target = path.join(dir, 'never.txt')
-    const write = await call(client, 'write_file', {
+    const write = await callTool(client, 'write_file', {
       path: target,
       contents: 'x',
     })
@@ -346,30 +334,19 @@ describe('access', () => {
     await fs.rm(other, { recursive: true, force: true })
   })
 
-  const call = async (
-    client: Client,
-    name: string,
-    args: Record<string, unknown>,
-  ) => {
-    const result = await client.callTool({ name, arguments: args })
-    return {
-      isError: result.isError,
-      text: (result.content as Array<{ text: string }>)[0].text,
-    }
-  }
-
   it('reads, writes and edits any path', async () => {
     const client = await connect()
     const file = path.join(other, 'elsewhere.txt')
-    expect((await call(client, 'read_file', { path: file })).text).toBe(
+    expect((await callTool(client, 'read_file', { path: file })).text).toBe(
       'outside the test dir',
     )
     const made = path.join(other, 'new', 'deep', 'f.txt')
     expect(
-      (await call(client, 'write_file', { path: made, content: 'hi' })).isError,
+      (await callTool(client, 'write_file', { path: made, content: 'hi' }))
+        .isError,
     ).toBeFalsy()
     expect(await fs.readFile(made, 'utf-8')).toBe('hi')
-    const edited = await call(client, 'edit_file', {
+    const edited = await callTool(client, 'edit_file', {
       path: file,
       edits: [{ oldText: 'outside', newText: 'beyond' }],
     })
@@ -379,17 +356,18 @@ describe('access', () => {
 
   it('resolves relative paths against the working directory', async () => {
     const client = await connect()
-    expect((await call(client, 'read_file', { path: 'note.txt' })).text).toBe(
-      'original',
-    )
+    expect(
+      (await callTool(client, 'read_file', { path: 'note.txt' })).text,
+    ).toBe('original')
   })
 
   it('runs the shell in the working directory unless told otherwise', async () => {
     const client = await connect()
-    const here = (await call(client, 'shell', { command: 'pwd' })).text
+    const here = (await callTool(client, 'shell', { command: 'pwd' })).text
     expect(await fs.realpath(here)).toBe(dir)
-    const there = (await call(client, 'shell', { command: 'pwd', cwd: other }))
-      .text
+    const there = (
+      await callTool(client, 'shell', { command: 'pwd', cwd: other })
+    ).text
     expect(await fs.realpath(there)).toBe(other)
   })
 

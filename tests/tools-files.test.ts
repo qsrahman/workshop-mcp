@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Client } from '@modelcontextprotocol/client'
-import { callError, connect, dir } from './harness.js'
+import { callError, callTool, connect, dir } from './harness.js'
 
 describe('edit_file arguments', () => {
   it('rejects an empty edits list at the schema and leaves the file alone', async () => {
@@ -123,13 +123,8 @@ describe('write_file', () => {
 })
 
 describe('read_file for agents', () => {
-  const read = async (client: Client, args: Record<string, unknown>) => {
-    const result = await client.callTool({ name: 'read_file', arguments: args })
-    return {
-      isError: result.isError,
-      text: (result.content as Array<{ text: string }>)[0].text,
-    }
-  }
+  const read = (client: Client, args: Record<string, unknown>) =>
+    callTool(client, 'read_file', args)
 
   it('reads a range with offset and limit', async () => {
     const client = await connect()

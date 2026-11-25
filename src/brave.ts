@@ -1,4 +1,4 @@
-// Brave Search for the brave_web_search tool.
+// Brave Search for the web_search tool.
 //
 // Adapted from brave/brave-search-mcp-server (MIT License, Copyright (c) 2024
 // Anthropic, PBC and (c) 2025 Brave Software, Inc; see THIRD_PARTY_NOTICES.md):

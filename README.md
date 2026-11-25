@@ -16,7 +16,7 @@ A small [Model Context Protocol](https://modelcontextprotocol.io) server that gi
 | `edit_file`           | Apply ordered `{oldText, newText}` edits and return a git-style diff. Each `oldText` must match exactly one place unless `replaceAll` is set. `dryRun` previews without writing.                                                                                                                                                    |
 | `shell`               | Run a shell command; returns its output as plain text, starting with the exit code when it fails and labelling stderr when there is any. Always served (see Security model).                                                                                                                                                                                                                |
 | `fetch_url`           | Fetch a web page and return its readable content as markdown, in parts for a long page. Refuses private and local addresses, and obeys `robots.txt`.                                                                                                                                  |
-| `brave_web_search`    | Search the web with Brave Search; returns a numbered list of results (title, source, age, URL, description). **Only offered when `BRAVE_API_KEY` is set** (see Web search).                                                                                                                                                         |
+| `web_search`    | Search the web with Brave Search; returns a numbered list of results (title, source, age, URL, description). **Only offered when `BRAVE_API_KEY` is set** (see Web search).                                                                                                                                                         |
 
 ### For agents
 
@@ -24,7 +24,7 @@ The server sends MCP `instructions` when a client connects: that file access is 
 
 ### Fetching web pages
 
-`fetch_url` fetches a URL and returns the page's main content as markdown, without the navigation and footers. It needs no key, and is the natural partner of `brave_web_search`: search to find a page, fetch to read it.
+`fetch_url` fetches a URL and returns the page's main content as markdown, without the navigation and footers. It needs no key, and is the natural partner of `web_search`: search to find a page, fetch to read it.
 
 - It asks the site for markdown first and returns markdown as it is, otherwise it extracts the article from the HTML (with Mozilla's Readability) and converts it. `raw: true` returns the source instead. Text such as JSON passes through; images, PDFs and other binary content are refused.
 - A long page is cut at `max_length` characters (default 20,000), and the result says which `start_index` to continue from. The page is kept in memory for five minutes, so reading the rest does not fetch it again.
@@ -36,7 +36,7 @@ The server sends MCP `instructions` when a client connects: that file access is 
 
 ### Web search (optional)
 
-`brave_web_search` searches the web through the [Brave Search API](https://brave.com/search/api/). It is offered only when the `BRAVE_API_KEY` environment variable is set, so without a key nothing changes. Create a key in the [Brave Search API dashboard](https://api-dashboard.search.brave.com/app/keys) and give it to the server through your client's `env` setting (examples below), not on the command line, where it would show in process listings.
+`web_search` searches the web through the [Brave Search API](https://brave.com/search/api/). It is offered only when the `BRAVE_API_KEY` environment variable is set, so without a key nothing changes. Create a key in the [Brave Search API dashboard](https://api-dashboard.search.brave.com/app/keys) and give it to the server through your client's `env` setting (examples below), not on the command line, where it would show in process listings.
 
 - It takes a `query` and, optionally, `count`, `offset` (pages), `freshness` (`pd`, `pw`, `pm`, `py`, or a date range), `country`, `search_lang` and `safesearch`. Results come back as a short numbered list to keep them cheap in tokens. Snippets are requested without highlight markup.
 - The results are untrusted third-party text, and the key needs care; see [Security model](#security-model).
@@ -76,7 +76,7 @@ Separately, the address check keeps `fetch_url` from being used against services
 
 ### Web search
 
-`brave_web_search` sends queries to Brave and returns web text the model then reads. The text is untrusted, so a page can try to steer the model. The server tells the model not to follow it, which is a mitigation, not a boundary; what limits the damage is what the model is allowed to do next (your client's tool approvals, and where the server runs).
+`web_search` sends queries to Brave and returns web text the model then reads. The text is untrusted, so a page can try to steer the model. The server tells the model not to follow it, which is a mitigation, not a boundary; what limits the damage is what the model is allowed to do next (your client's tool approvals, and where the server runs).
 
 The API key is held only in the server's memory and the `X-Subscription-Token` header of the request to Brave; it is never returned by a tool and is removed from the shell's environment. Since file access is unrestricted, though, the model can read any file you can, including a client config file that contains the key. If the key must stay out of reach, run the server as a user who cannot read that file, or in a container.
 
@@ -132,13 +132,13 @@ workshop-mcp [options]
 
 On startup the server writes one line to stderr saying what it started with, for example `workshop-mcp running on stdio (web search on). File access is not restricted.`
 
-**Tools.** The server always serves `read_file`, `read_multiple_files`, `write_file`, `edit_file`, `shell` and `fetch_url`, and also `brave_web_search` when `BRAVE_API_KEY` is set.
+**Tools.** The server always serves `read_file`, `read_multiple_files`, `write_file`, `edit_file`, `shell` and `fetch_url`, and also `web_search` when `BRAVE_API_KEY` is set.
 
 #### Environment variable
 
 | Variable        | Default        | Effect                                                                                                                                                                                                                                                       |
 | --------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BRAVE_API_KEY` | unset: no search | A [Brave Search API](https://brave.com/search/api/) key. When set, the server also serves `brave_web_search`. Surrounding whitespace is trimmed, and a blank value counts as unset. It is read only from the environment, never from an option, because a command line shows in process listings. The shell tool does not pass it on to commands. |
+| `BRAVE_API_KEY` | unset: no search | A [Brave Search API](https://brave.com/search/api/) key. When set, the server also serves `web_search`. Surrounding whitespace is trimmed, and a blank value counts as unset. It is read only from the environment, never from an option, because a command line shows in process listings. The shell tool does not pass it on to commands. |
 
 #### Examples
 

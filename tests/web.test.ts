@@ -414,6 +414,15 @@ describe('web fetching', () => {
       expect(paths()).toEqual([])
     })
 
+    // robots.txt is plain text: a <meta charset> inside a comment is not a
+    // declaration, and must not make the rules decode as another encoding.
+    it('reads the rules as text, whatever a comment in them says about a charset', async () => {
+      disallow('User-agent: *\nDisallow: /private\n# <meta charset=utf-16le>\n')
+      const message = await failure(fetcher().fetch(`${base}/private/page`))
+      expect(message).toContain('does not allow automated fetching')
+      expect(paths()).toEqual([])
+    })
+
     it('matches a rule that names a query string, in the resolved spelling too', async () => {
       disallow('User-agent: *\nDisallow: /private?id=')
       // as written the path is //private, so only the resolved spelling matches

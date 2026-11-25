@@ -35,7 +35,7 @@ function serverInstructions(webSources: string[]): string {
 
 export interface ServerOptions {
   /**
-   * Register brave_web_search. It needs a Brave Search API key, so it is left
+   * Register web_search. It needs a Brave Search API key, so it is left
    * out when this is not given.
    */
   brave?: BraveOptions
