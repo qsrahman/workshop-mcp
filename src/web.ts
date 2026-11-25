@@ -139,14 +139,7 @@ export function decodeBody(contentType: string, body: Buffer): string {
 
 const BINARY_TYPE =
   /^(image|audio|video|font)\/|^application\/(pdf|zip|gzip|x-gzip|octet-stream|x-tar|x-7z-compressed|x-rar-compressed|wasm)\b/
-const NUL = 0
 const HTML_SIGNATURE = /<!doctype html|<html[\s>]/i
-
-/** Text is what a model can use; images, PDFs and archives are a dead end for it. */
-function isTextual(mime: string, body: Buffer): boolean {
-  if (BINARY_TYPE.test(mime)) return false
-  return !body.subarray(0, 8192).includes(NUL)
-}
 
 // -------------------------------------------------------------- extraction
 
@@ -365,7 +358,8 @@ export function createWebFetcher(options: WebFetcherOptions) {
     }
     const contentType = String(response.headers['content-type'] ?? '')
     const mime = contentType.split(';')[0].trim().toLowerCase()
-    if (!isTextual(mime, response.body)) {
+    // Text is what a model can use; images, PDFs and archives are a dead end for it.
+    if (BINARY_TYPE.test(mime) || response.body.subarray(0, 8192).includes(0)) {
       throw new FetchFailure(
         `${finalUrl} is ${mime ? `a ${mime} file` : 'binary content'}, not text; this tool returns text only`,
       )
@@ -378,9 +372,9 @@ export function createWebFetcher(options: WebFetcherOptions) {
       prefix,
     })
 
-    if (mime === 'text/markdown' || mime === 'text/x-markdown')
+    if (raw || mime === 'text/markdown' || mime === 'text/x-markdown') {
       return page(text)
-    if (raw) return page(text)
+    }
     // A declared type decides; a body is sniffed only when there is no type, or
     // when `<html` opens it (some servers label pages text/plain).
     if (
