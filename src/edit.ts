@@ -9,6 +9,7 @@ import {
   readWholeTextFile,
   writeFileContent,
 } from './files.js'
+import { wholeEnd } from './text.js'
 
 // The tool's input schema and the engine's argument type, defined once.
 export const fileEditSchema = z.strictObject({
@@ -44,7 +45,7 @@ function clipLine(
 ): string {
   return line.length <= maxChars
     ? line
-    : line.slice(0, maxChars) +
+    : line.slice(0, wholeEnd(line, maxChars)) +
         ` [... cut: the line has ${line.length} characters]`
 }
 

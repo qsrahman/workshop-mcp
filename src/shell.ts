@@ -2,6 +2,7 @@
 // Nothing confines the command; see the security model in the README.
 import { stripVTControlCharacters } from 'node:util'
 import { execa } from 'execa'
+import { splitsPair, wholeEnd } from './text.js'
 
 export const DEFAULT_COMMAND_TIMEOUT_MS = 30_000
 // execa's buffer cap: an oversized `cat` is why output is capped at all.
@@ -28,7 +29,10 @@ function outputText(raw: string): string {
     return `[binary output omitted: ${text.length} characters containing NUL bytes; inspect it with a command such as: file <path> or xxd <path> | head]`
   }
   if (text.length <= MAX_OUTPUT_CHARS) return text
-  return `${text.slice(0, HALF)}\n[... ${text.length - MAX_OUTPUT_CHARS} characters omitted; narrow the command to see the rest ...]\n${text.slice(-HALF)}`
+  const headEnd = wholeEnd(text, HALF)
+  let tailStart = text.length - HALF
+  if (splitsPair(text, tailStart)) tailStart++
+  return `${text.slice(0, headEnd)}\n[... ${tailStart - headEnd} characters omitted; narrow the command to see the rest ...]\n${text.slice(tailStart)}`
 }
 
 /**

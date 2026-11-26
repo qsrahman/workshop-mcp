@@ -2,6 +2,17 @@
 
 Versions follow [semver](https://semver.org). Each release's notes on GitHub are taken from the matching section here, and a release tag fails to publish without one.
 
+## [Unreleased]
+
+### Security
+
+- `web_search`: if Brave echoed the API key in an error or a result, and the text was cut short through the middle of it, the first part of the key was shown. The key is now redacted before anything is cut.
+
+### Fixed
+
+- `read_file` with `offset` or `limit`, and any file read in parts, ended a line at a lone carriage return, U+2028 or U+2029, unlike a whole-file read, `tail` and `edit_file`. The line numbers disagreed and those characters were replaced by line breaks, so the text could not be edited back. Only a line feed (or CRLF) ends a line now.
+- Text shortened for the model is no longer cut through the middle of a character such as an emoji, which damaged it. This covers long lines and `tail` in `read_file`, `fetch_url` pages and very large HTML, `shell` output, the lines quoted in an `edit_file` error, and `web_search` titles and descriptions. A `start_index` inside such a character starts at its beginning.
+
 ## [0.8.1] - 2026-11-26
 
 ### Security

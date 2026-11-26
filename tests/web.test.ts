@@ -133,6 +133,13 @@ describe('web fetching', () => {
           'text/html',
           `<html><body><article>${`<p>${lorem}</p>`.repeat(2500)}</article></body></html>`,
         )
+      else if (path === '/huge-emoji')
+        // the odd "x" puts the 1,500,000-character cut inside an emoji
+        send(
+          200,
+          'text/html; charset=utf-8',
+          `<html><body><article><p>x${'😀'.repeat(800_000)}</p></article></body></html>`,
+        )
       else if (path === '/plain-doctype')
         send(
           200,
@@ -297,6 +304,13 @@ describe('web fetching', () => {
       const page = await fetcher().fetch(`${base}/huge`)
       expect(page.text).toContain('the page is very large')
       expect(page.text.length).toBeLessThan(1_500_000)
+    })
+
+    it('cuts a very large page between characters', async () => {
+      const page = await fetcher().fetch(`${base}/huge-emoji`)
+      expect(page.text).toContain('the page is very large')
+      expect(page.text.isWellFormed()).toBe(true)
+      expect(page.text).not.toContain('\uFFFD')
     })
 
     it('refuses images and other binary content', async () => {

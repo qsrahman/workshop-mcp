@@ -14,12 +14,13 @@ A stdio MCP server (TypeScript, ESM, Node) exposing four filesystem tools (`read
 - `src/paths.ts`: `validatePath` (resolves a path to its real location; restricts nothing), `withFsTimeout`.
 - `src/files.ts`: `readText`, `readWholeTextFile`, `tailFile`, `writeFileContent`, `withFileLock`, `friendlyFsError`.
 - `src/shell.ts`: `runShell` (execa), output truncation.
+- `src/text.ts`: `splitsPair` and `wholeEnd`. Any text shortened for the model is cut with them, so a character is never broken in two.
 - `src/edit.ts`: the `edit_file` engine and its mismatch error.
 - `src/net.ts`: `safeGet`, the HTTP GET behind `fetch_url` (address policy, host allowlist, manual redirects, byte-capped decoded reads); `isPublicAddress`, `normalizeAllowedHost`.
 - `src/web.ts`: `createWebFetcher` (robots.txt, charset decoding, Readability + turndown, a small page cache), `paginate`, the `fetch_url` input schema.
 - `src/brave.ts`: Brave Search client and result formatting for `web_search` (adapted from brave/brave-search-mcp-server).
 - `THIRD_PARTY_NOTICES.md`: licences of the code adapted from other projects; it ships in the npm package.
-- `tests/*.test.ts`: vitest, one file per `src/` module, plus `server.test.ts` and `tools-*.test.ts`, which drive `createServer` through an in-memory MCP client (`harness.ts`: temp directory and `connect`/`connectTo`; `helpers.ts`: temp directories and the fake Brave server).
+- `tests/*.test.ts`: vitest, one file per `src/` module, plus `server.test.ts` and `tools-*.test.ts`, which drive `createServer` through an in-memory MCP client (`harness.ts`: temp directory and `connect`/`connectTo`; `helpers.ts`: temp directories and the fake Brave server). `properties.test.ts` holds the property-based tests (fast-check) for reading, editing, paging, the Brave key and the command line; a failure prints a seed and the smallest failing input.
 - `dist/`: build output (`pnpm build`). Never edit by hand.
 
 ## Commands

@@ -15,6 +15,7 @@ import {
   safeGet,
   type SafeResponse,
 } from './net.js'
+import { splitsPair, wholeEnd } from './text.js'
 
 /** A failure whose message is already worded for the model; it is passed on unchanged. */
 class FetchFailure extends Error {
@@ -204,7 +205,9 @@ async function htmlToMarkdown(html: string, pageUrl: string): Promise<string> {
       import('turndown'),
     ])
   const cut = html.length > MAX_EXTRACT_HTML_CHARS
-  const source = cut ? html.slice(0, MAX_EXTRACT_HTML_CHARS) : html
+  const source = cut
+    ? html.slice(0, wholeEnd(html, MAX_EXTRACT_HTML_CHARS))
+    : html
   const turndown = new Turndown({
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
@@ -470,9 +473,13 @@ export function paginate(
   if (startIndex >= length) {
     return `${head}[start_index ${startIndex} is past the end of the content, which has ${length} characters]`
   }
-  const end = Math.min(startIndex + maxLength, length)
-  const slice = page.text.slice(startIndex, end)
+  // Neither end of a slice falls inside a character. A start inside one moves
+  // back to take it whole; an end moves back too, unless nothing would be left.
+  const start = splitsPair(page.text, startIndex) ? startIndex - 1 : startIndex
+  let end = Math.min(startIndex + maxLength, length)
+  if (splitsPair(page.text, end)) end += end - 1 > startIndex ? -1 : 1
+  const slice = page.text.slice(start, end)
   return end < length
-    ? `${head}${slice}\n\n[... showing characters ${startIndex}-${end} of ${length}; more follows. Continue with start_index=${end}]`
+    ? `${head}${slice}\n\n[... showing characters ${start}-${end} of ${length}; more follows. Continue with start_index=${end}]`
     : `${head}${slice}`
 }

@@ -8,6 +8,7 @@
 // is only ever sent in the X-Subscription-Token header.
 import { setTimeout as sleep } from 'node:timers/promises'
 import { z } from 'zod'
+import { wholeEnd } from './text.js'
 
 const BRAVE_API_BASE = 'https://api.search.brave.com/res/v1'
 
@@ -98,7 +99,7 @@ const webResponse = z.object({
 type Result = z.infer<typeof result>
 
 const clip = (text: string, max: number) =>
-  text.length > max ? `${text.slice(0, max - 1)}…` : text
+  text.length > max ? `${text.slice(0, wholeEnd(text, max - 1))}…` : text
 
 // Brave can echo the request's token in an error body or a result; never pass
 // that back to the model, whatever the response says. A key shorter than this
@@ -108,6 +109,13 @@ const redactKey = (text: string, key: string) =>
   key.length >= MIN_REDACTED_KEY_CHARS
     ? text.replaceAll(key, '[redacted]')
     : text
+
+// Every string is redacted as the body is parsed, before anything clips it: a
+// key cut in two would no longer be recognised.
+const parseRedacted = (body: string, key: string): unknown =>
+  JSON.parse(body, (_name, value: unknown) =>
+    typeof value === 'string' ? redactKey(value, key) : value,
+  )
 
 function formatResults(
   searched: string,
@@ -166,7 +174,8 @@ async function failure(response: Response, apiKey: string): Promise<Error> {
     meta?: { component?: string }
   } = {}
   try {
-    error = ((await response.json()) as { error?: typeof error }).error ?? {}
+    const body = parseRedacted(await response.text(), apiKey)
+    error = (body as { error?: typeof error }).error ?? {}
   } catch {
     // an error page, not JSON: the status line is all there is to say
   }
@@ -259,23 +268,26 @@ export function createBrave({
         )
       })
       if (response.ok)
-        return response.json().catch((error: unknown) => {
-          // A cancellation by the caller is passed on as it is.
-          if (signal?.aborted) throw error
-          if (timeout.aborted) throw timedOut(error)
-          if (!(error instanceof SyntaxError)) {
+        return response
+          .text()
+          .then((body) => parseRedacted(body, apiKey))
+          .catch((error: unknown) => {
+            // A cancellation by the caller is passed on as it is.
+            if (signal?.aborted) throw error
+            if (timeout.aborted) throw timedOut(error)
+            if (!(error instanceof SyntaxError)) {
+              throw new Error(
+                'Brave Search closed the connection before the response was complete.',
+                { cause: error },
+              )
+            }
+            // V8 puts a snippet of the malformed body in SyntaxError.message; a
+            // body beginning with the token would echo part of the key. Say only
+            // what went wrong instead of passing that snippet on.
             throw new Error(
-              'Brave Search closed the connection before the response was complete.',
-              { cause: error },
+              'Brave Search sent a response that was not valid JSON.',
             )
-          }
-          // V8 puts a snippet of the malformed body in SyntaxError.message; a
-          // body beginning with the token would echo part of the key. Say only
-          // what went wrong instead of passing that snippet on.
-          throw new Error(
-            'Brave Search sent a response that was not valid JSON.',
-          )
-        })
+          })
 
       const wait =
         response.status === 429
@@ -300,13 +312,10 @@ export function createBrave({
       if (!parsed.success)
         throw new Error('Brave Search sent a response in an unexpected format.')
       const body = parsed.data
-      return redactKey(
-        formatResults(
-          input.query,
-          body.query?.altered,
-          body.web?.results ?? [],
-        ),
-        apiKey,
+      return formatResults(
+        input.query,
+        body.query?.altered,
+        body.web?.results ?? [],
       )
     },
   }

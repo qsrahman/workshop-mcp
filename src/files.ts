@@ -4,7 +4,7 @@
 import fs, { type FileHandle } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import path from 'node:path'
-import { createInterface } from 'node:readline'
+import { splitsPair, wholeEnd } from './text.js'
 
 // File reading constants.
 const TAIL_CHUNK_BYTES = 64 * 1024
@@ -145,7 +145,30 @@ interface ReadOptions {
 }
 
 /**
- * Read lines from a file handle using readline, collecting them with a character budget.
+ * The lines of a text stream. Only "\n" ends a line (with the "\r" of a CRLF),
+ * as for tail and edit_file: node:readline would also end one at a lone "\r",
+ * U+2028 or U+2029, which changes both the line numbers and the text.
+ */
+async function* splitLines(chunks: AsyncIterable<string>) {
+  // The pieces of the unfinished line, joined once it ends: adding each chunk
+  // to a growing string would rescan a long line over and over.
+  let pieces: string[] = []
+  for await (const chunk of chunks) {
+    const parts = chunk.split('\n')
+    const rest = parts.pop() as string
+    for (const part of parts) {
+      pieces.push(part)
+      yield pieces.join('').replace(/\r$/, '')
+      pieces = []
+    }
+    pieces.push(rest)
+  }
+  const last = pieces.join('')
+  if (last !== '') yield last
+}
+
+/**
+ * Read lines from a file handle, collecting them with a character budget.
  * Returns collected lines and the next offset if more lines remain.
  */
 async function readLinesFromHandle(
@@ -155,13 +178,12 @@ async function readLinesFromHandle(
   maxChars: number,
 ): Promise<{ lines: string[]; nextOffset?: number; totalLines: number }> {
   const input = handle.createReadStream({ encoding: 'utf-8' })
-  const rl = createInterface({ input, crlfDelay: Infinity })
   const lines: string[] = []
   let chars = 0
   let lineNumber = 0
   let nextOffset: number | undefined
   try {
-    for await (const line of rl) {
+    for await (const line of splitLines(input)) {
       lineNumber++
       if (lineNumber < startLine) continue
       if (
@@ -175,14 +197,13 @@ async function readLinesFromHandle(
       const shown =
         line.length <= maxChars
           ? line
-          : `${line.slice(0, maxChars)} [... line cut: it has ${line.length} characters]`
+          : `${line.slice(0, wholeEnd(line, maxChars))} [... line cut: it has ${line.length} characters]`
       lines.push(shown)
       chars += shown.length + 1
     }
   } finally {
-    rl.close()
-    // rl.close() leaves the stream open on an early exit; destroying it
-    // stops the pending read before the handle is closed below.
+    // Destroying the stream stops a pending read before the handle is closed
+    // below, also on an early exit.
     input.destroy()
   }
   return { lines, nextOffset, totalLines: lineNumber }
@@ -258,9 +279,11 @@ export async function tailFile(
     // it out, and when the byte limit stopped the read first, a cut line is
     // all there is, and the cap below says so.
     const result = lines.slice(-n).join('\n')
-    return result.length > maxChars
-      ? `[... showing only the last ${maxChars} characters ...]\n${result.slice(-maxChars)}`
-      : result
+    if (result.length <= maxChars) return result
+    // the part kept starts after a character the limit falls inside
+    let from = result.length - maxChars
+    if (splitsPair(result, from)) from++
+    return `[... showing only the last ${maxChars} characters ...]\n${result.slice(from)}`
   } finally {
     await handle.close()
   }
