@@ -26,7 +26,7 @@ These are documented behaviour, not vulnerabilities:
 
 - **No sandbox.** The file tools and the shell can reach anything the user running the server can, and the server has no option that restricts them. Use a restricted user or a container.
 - **Prompt injection through web text.** A fetched page or search result can try to steer the model. The server labels such text as untrusted, but it cannot stop a model from following it. `--allowed-hosts`, your client's tool approvals, and running the server as a restricted user or in a container limit what an injection can do.
-- **The known gaps** listed under "Limits of the checks" in the README: Windows and WSL path handling.
+- **The known gaps** listed under "Limits of the checks" in the README: Windows and WSL path handling, and no time limit on reading or writing file contents.
 - Behaviour of the MCP client or the model that is using the server.
 
 If you are unsure which side a finding is on, report it anyway.

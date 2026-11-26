@@ -10,7 +10,7 @@ A small [Model Context Protocol](https://modelcontextprotocol.io) server that gi
 
 | Tool                  | What it does                                                                                                                                                                                                                                                                                                                        |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `read_file`           | Read a text file. Output is capped at about 100,000 characters; a longer file ends with the offset to continue from. `offset` and `limit` read a range of lines, `head` / `tail` the first / last N lines (use only one of the three). Directories, binary files and text that is not valid UTF-8 are refused with a clear message. |
+| `read_file`           | Read a text file. Output is capped at about 100,000 characters; a longer file ends with the offset to continue from. `offset` and `limit` read a range of lines, `head` / `tail` the first / last N lines (use only one of the three). Directories, binary files and invalid UTF-8 near the start of a file are refused with a clear message; edits check the whole file. |
 | `read_multiple_files` | Read up to 50 files at once, about 200,000 characters in total (a file that does not fit is cut, with where to continue). A failure on one file is reported inline and does not stop the others.                                                                                                                                    |
 | `write_file`          | Create a file or overwrite it completely, creating any missing parent directories.                                                                                                                                                                                                                                                  |
 | `edit_file`           | Apply ordered `{oldText, newText}` edits and return a git-style diff. Each `oldText` must match exactly one place unless `replaceAll` is set. `dryRun` previews without writing.                                                                                                                                                    |
@@ -84,7 +84,7 @@ The API key is held only in the server's memory and the `X-Subscription-Token` h
 
 `shell` is always served. **It is not sandboxed:** the command can read, write and delete anything the server process can, and can use the network. Its starting directory (`cwd`) defaults to the server's working directory and can be any directory.
 
-Commands run with stdin closed, are killed (with the processes they started) after `timeoutMs` (default 30 s, `0` disables) or when the request is cancelled, and each of stdout and stderr is cut to 20,000 characters (start and end kept). Terminal escape sequences are stripped and binary output is replaced by a note. A non-zero exit is returned as a result with `isError` set. The `BRAVE_API_KEY` environment variable is not passed to commands.
+Commands run with stdin closed, are killed (with the processes they started) after `timeoutMs` (default 30 s, `0` disables) or when the request is cancelled, and each of stdout and stderr is cut to 20,000 characters (start and end kept). Terminal escape sequences are stripped and binary output is replaced by a note. A non-zero exit is returned as a result with `isError` set. The `BRAVE_API_KEY` environment variable is not passed to commands, but **every other variable of the server's environment is**, so the model can read, for example, a `GITHUB_TOKEN` or `AWS_SECRET_ACCESS_KEY` that your client sets in the server's `env`, with a plain `env` command. Keep a secret out of the server's environment if the model must not see it.
 
 ### Limits of the checks
 
@@ -254,7 +254,7 @@ Keep the key out of anything you commit; `.mcp.json` and Cursor's project `mcp.j
 | `pnpm test:coverage` | Run it with coverage, which fails below the floor in `vitest.config.ts` |
 | `pnpm format`       | Format with prettier              |
 | `pnpm format:check` | Check formatting                  |
-| `pnpm validate`     | Typecheck, test and format check  |
+| `pnpm validate`     | Build, typecheck, test and format check |
 
 The source layout, conventions and release process are described in [AGENTS.md](AGENTS.md).
 

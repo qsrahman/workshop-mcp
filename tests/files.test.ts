@@ -48,6 +48,56 @@ describe('writeFileContent', () => {
     ).rejects.toThrow()
   })
 
+  it.runIf(process.platform !== 'win32')(
+    'refuses a pipe swapped in after the regular-file check',
+    async () => {
+      const fifo = path.join(root, 'race')
+      execFileSync('mkfifo', [fifo])
+      // Keep a reader open so the write-side open does not wait or fail with ENXIO.
+      const reader = await fs.open(
+        fifo,
+        fsSync.constants.O_RDONLY | fsSync.constants.O_NONBLOCK,
+      )
+      try {
+        const lstat = vi.spyOn(fs, 'lstat').mockResolvedValue({
+          isFile: () => true,
+        } as never)
+        try {
+          await expect(writeFileContent(fifo, 'bad')).rejects.toMatchObject({
+            code: 'ENOTREG',
+          })
+        } finally {
+          lstat.mockRestore()
+        }
+      } finally {
+        await reader.close()
+      }
+    },
+    5000,
+  )
+
+  // The same races as above, for the two things the open itself refuses.
+  it.runIf(process.platform !== 'win32')(
+    'refuses a symlink or a pipe with no reader swapped in after the check',
+    async () => {
+      const fifo = path.join(root, 'no-reader')
+      execFileSync('mkfifo', [fifo])
+      const link = path.join(root, 'swapped-link')
+      await fs.writeFile(path.join(outside, 'victim'), 'keep')
+      await fs.symlink(path.join(outside, 'victim'), link)
+      vi.spyOn(fs, 'lstat').mockResolvedValue({ isFile: () => true } as never)
+      for (const target of [fifo, link]) {
+        await expect(writeFileContent(target, 'bad')).rejects.toMatchObject({
+          code: 'ENOTREG',
+        })
+      }
+      expect(await fs.readFile(path.join(outside, 'victim'), 'utf-8')).toBe(
+        'keep',
+      )
+    },
+    5000,
+  )
+
   it('does not write through a symlink', async () => {
     const target = path.join(outside, 't')
     await fs.writeFile(target, 'keep')
@@ -276,7 +326,9 @@ describe('readText', () => {
     } finally {
       swap.mockRestore()
     }
-    await expect(readText(validated)).rejects.toMatchObject({ code: 'ELOOP' })
+    await expect(readText(validated)).rejects.toMatchObject({
+      code: 'ESYMLINK',
+    })
   })
 })
 
@@ -344,8 +396,14 @@ describe('friendlyFsError', () => {
     expect(friendlyFsError(code('EBINARY'), shown).message).toContain(
       'binary file',
     )
-    expect(friendlyFsError(code('ELOOP'), shown).message).toBe(
+    expect(friendlyFsError(code('ESYMLINK'), shown).message).toBe(
       'Refusing to read a symbolic link: src/a.ts',
+    )
+    expect(friendlyFsError(code('ELOOP'), shown).message).toBe(
+      'Too many symbolic links (do they form a loop?): src/a.ts',
+    )
+    expect(friendlyFsError(code('EBROKENLINK'), shown).message).toBe(
+      'src/a.ts goes through a broken symlink (its target does not exist)',
     )
     expect(friendlyFsError(code('ENOTFILE'), shown).message).toBe(
       'Refusing to read: src/a.ts is not a regular file (it is a device, pipe or socket)',

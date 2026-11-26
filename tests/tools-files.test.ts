@@ -226,6 +226,53 @@ describe('edit_file ambiguity', () => {
   })
 })
 
+describe('path resolution errors', () => {
+  it("names the caller's path when a parent is not a directory", async () => {
+    await fs.writeFile(path.join(dir, 'plain'), 'x')
+    const client = await connect()
+    const target = 'plain/child.txt'
+    for (const [tool, args] of [
+      ['read_file', { path: target }],
+      ['read_multiple_files', { paths: [target] }],
+      ['write_file', { path: target, content: 'y' }],
+      ['edit_file', { path: target, edits: [{ oldText: 'x', newText: 'y' }] }],
+    ] as const) {
+      const message = await callError(client, tool, args)
+      expect(message, tool).toContain(
+        `A parent of ${target} is not a directory`,
+      )
+      expect(message, tool).not.toContain(dir)
+    }
+  })
+})
+
+describe('symlink errors', () => {
+  it('calls a loop a loop, whichever tool runs into it', async () => {
+    await fs.symlink('loop2', path.join(dir, 'loop1'))
+    await fs.symlink('loop1', path.join(dir, 'loop2'))
+    const client = await connect()
+    for (const [tool, args] of [
+      ['read_file', { path: 'loop1' }],
+      ['write_file', { path: 'loop1', content: 'y' }],
+      ['shell', { command: 'pwd', cwd: 'loop1' }],
+    ] as const) {
+      expect(await callError(client, tool, args), tool).toBe(
+        'Too many symbolic links (do they form a loop?): loop1',
+      )
+    }
+  })
+
+  it('does not call the last name the broken link when an earlier one is', async () => {
+    await fs.symlink('nowhere', path.join(dir, 'dangling'))
+    const message = await callError(await connect(), 'read_file', {
+      path: 'dangling/sub/f.txt',
+    })
+    expect(message).toBe(
+      'dangling/sub/f.txt goes through a broken symlink (its target does not exist)',
+    )
+  })
+})
+
 describe('concurrent calls', () => {
   it('applies parallel edits to different lines of one file without losing any', async () => {
     const client = await connect()

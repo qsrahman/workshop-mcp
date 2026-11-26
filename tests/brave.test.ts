@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createBrave } from '../src/brave.js'
 import { startFakeBrave } from './helpers.js'
 
@@ -244,6 +244,81 @@ describe('failures', () => {
       body: '<html>Bad gateway</html>',
     })
     expect(message).toBe('Brave Search returned HTTP 502 Bad Gateway.')
+  })
+
+  it('does not echo a malformed JSON body on the success path', async () => {
+    const message = await failure({ body: `${KEY}{` })
+    expect(message).toBe(
+      'Brave Search sent a response that was not valid JSON.',
+    )
+    expect(message).not.toContain(KEY.slice(0, 10))
+  })
+
+  // Only bad JSON is bad JSON: what else can go wrong while the body is read
+  // must reach the caller as itself.
+  it('says the response was cut off when the connection drops mid-body', async () => {
+    expect(await failure({ body: '', partial: 'reset' })).toBe(
+      'Brave Search closed the connection before the response was complete.',
+    )
+  })
+
+  it('says it could not reach Brave, with the system error code', async () => {
+    await fake.close() // nothing listens on the port any more
+    await expect(brave.web({ query: 'x' })).rejects.toThrow(
+      'Could not reach Brave Search (ECONNREFUSED). Check the network connection and BRAVE_API_KEY.',
+    )
+  })
+
+  // fetch quotes an invalid header value in its error, and that value is the key.
+  it('does not repeat a key that cannot be sent as a header', async () => {
+    const broken = createBrave({
+      apiKey: 'first-half\nsecond-half',
+      baseUrl: fake.baseUrl,
+    })
+    const error = await broken.web({ query: 'x' }).then(
+      () => new Error('no error'),
+      (thrown: Error) => thrown,
+    )
+    expect(error.message).toContain('Could not reach Brave Search')
+    const everything = `${error.message} ${String(error.cause)}`
+    expect(everything).not.toContain('first-half')
+    expect(everything).not.toContain('second-half')
+  })
+
+  it('lets a cancellation through before any answer', async () => {
+    fake.replies.push({ body: {}, delayMs: 2000 })
+    const cancel = new AbortController()
+    setTimeout(() => cancel.abort(), 50)
+    await expect(
+      brave.web({ query: 'x' }, cancel.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  // The limit is 15 s; the test shortens it rather than waiting that long.
+  it.each([
+    ['before any answer', { body: {}, delayMs: 2000 }],
+    ['while the body is read', { body: '', partial: 'stall' as const }],
+  ])('says Brave did not answer in time, %s', async (_when, reply) => {
+    const real = AbortSignal.timeout.bind(AbortSignal)
+    const spy = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockImplementation(() => real(100))
+    try {
+      expect(await failure(reply)).toBe(
+        'Brave Search did not answer within 15 seconds.',
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('lets a cancellation through while the body is read', async () => {
+    fake.replies.push({ body: '', partial: 'stall' })
+    const cancel = new AbortController()
+    setTimeout(() => cancel.abort(), 50)
+    await expect(
+      brave.web({ query: 'x' }, cancel.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' })
   })
 
   it('rejects a response in an unexpected format', async () => {

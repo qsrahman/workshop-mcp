@@ -233,6 +233,12 @@ export function createBrave({
     // tool is for pages.
     params.set('result_filter', 'web')
 
+    const timedOut = (cause: unknown) =>
+      new Error(
+        `Brave Search did not answer within ${REQUEST_TIMEOUT_MS / 1000} seconds.`,
+        { cause },
+      )
+
     for (let attempt = 1; ; attempt++) {
       const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       const response = await fetch(url, {
@@ -243,15 +249,33 @@ export function createBrave({
         },
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       }).catch((error: unknown) => {
-        if (timeout.aborted) {
-          throw new Error(
-            `Brave Search did not answer within ${REQUEST_TIMEOUT_MS / 1000} seconds.`,
-            { cause: error },
-          )
-        }
-        throw error
+        if (signal?.aborted) throw error
+        if (timeout.aborted) throw timedOut(error)
+        // fetch's message can quote a header value, which here is the API key,
+        // so only the system error code is passed on, and no `cause`.
+        const code = (error as { cause?: NodeJS.ErrnoException }).cause?.code
+        throw new Error(
+          `Could not reach Brave Search${code ? ` (${code})` : ''}. Check the network connection and BRAVE_API_KEY.`,
+        )
       })
-      if (response.ok) return response.json()
+      if (response.ok)
+        return response.json().catch((error: unknown) => {
+          // A cancellation by the caller is passed on as it is.
+          if (signal?.aborted) throw error
+          if (timeout.aborted) throw timedOut(error)
+          if (!(error instanceof SyntaxError)) {
+            throw new Error(
+              'Brave Search closed the connection before the response was complete.',
+              { cause: error },
+            )
+          }
+          // V8 puts a snippet of the malformed body in SyntaxError.message; a
+          // body beginning with the token would echo part of the key. Say only
+          // what went wrong instead of passing that snippet on.
+          throw new Error(
+            'Brave Search sent a response that was not valid JSON.',
+          )
+        })
 
       const wait =
         response.status === 429

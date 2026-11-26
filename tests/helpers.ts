@@ -25,6 +25,8 @@ export interface FakeReply {
   /** An object is sent as JSON; a string is sent as it is. */
   body: unknown
   delayMs?: number
+  /** Send the headers and only the start of a body, then drop or stall. */
+  partial?: 'reset' | 'stall'
 }
 
 /**
@@ -45,6 +47,11 @@ export async function startFakeBrave() {
         'content-type': 'application/json',
         ...reply.headers,
       })
+      if (reply.partial) {
+        res.write('{"web":')
+        if (reply.partial === 'reset') setTimeout(() => res.destroy(), 20)
+        return
+      }
       res.end(
         typeof reply.body === 'string'
           ? reply.body

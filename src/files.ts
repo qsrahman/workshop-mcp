@@ -31,7 +31,11 @@ const ERROR_MESSAGES: Record<string, (shown: string) => string> = {
   ENOTDIR: (shown) => `A parent of ${shown} is not a directory`,
   EACCES: (shown) => `Permission denied: ${shown}`,
   EPERM: (shown) => `Permission denied: ${shown}`,
-  ELOOP: (shown) => `Refusing to read a symbolic link: ${shown}`,
+  ESYMLINK: (shown) => `Refusing to read a symbolic link: ${shown}`,
+  ELOOP: (shown) => `Too many symbolic links (do they form a loop?): ${shown}`,
+  // The broken link may be any part of the path, not only its last name.
+  EBROKENLINK: (shown) =>
+    `${shown} goes through a broken symlink (its target does not exist)`,
   ENOTFILE: (shown) =>
     `Refusing to read: ${shown} is not a regular file (it is a device, pipe or socket)`,
   ENOTREG: (shown) => `Refusing to write: ${shown} is not a regular file`,
@@ -59,7 +63,7 @@ export function friendlyFsError(error: unknown, shown: string): Error {
 /**
  * Open a file once for reading, refusing a directory (EISDIR), anything else
  * that is not a regular file (ENOTFILE: a device would be read without end, as
- * /dev/zero reports size 0), a symlink swapped in after path validation (ELOOP)
+ * /dev/zero reports size 0), a symlink swapped in after path validation (ESYMLINK)
  * and a file that does not look like UTF-8 text (EBINARY): the first
  * `checkBytes` bytes must hold no NUL and be valid UTF-8. The caller reads
  * through the same handle, so the file checked is the file read, and closes it.
@@ -75,8 +79,9 @@ async function openTextFile(
   try {
     handle = await fs.open(filePath, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
   } catch (error) {
+    // From an O_NOFOLLOW open, ELOOP means the path itself is a symlink.
     if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
-      throw codedError('ELOOP')
+      throw codedError('ESYMLINK')
     }
     throw error
   }
@@ -304,9 +309,28 @@ export async function writeFileContent(
     throw codedError('ENOTREG', 'not a regular file')
   }
   // Overwrite in place (not rename) to keep the inode, permissions and links.
-  const { O_WRONLY, O_TRUNC, O_NOFOLLOW = 0 } = constants
-  const handle = await fs.open(filePath, O_WRONLY | O_TRUNC | O_NOFOLLOW)
+  // For something swapped in after the lstat above: O_NOFOLLOW refuses a
+  // symlink (ELOOP), and O_NONBLOCK keeps a pipe from hanging the open, which
+  // fails with ENXIO when nothing reads it. One with a reader opens, and the
+  // stat on the handle catches it before any write.
+  const { O_WRONLY, O_TRUNC, O_NOFOLLOW = 0, O_NONBLOCK = 0 } = constants
+  let handle: FileHandle
   try {
+    handle = await fs.open(
+      filePath,
+      O_WRONLY | O_TRUNC | O_NOFOLLOW | O_NONBLOCK,
+    )
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException
+    if (code === 'ELOOP' || code === 'ENXIO') {
+      throw codedError('ENOTREG', 'not a regular file')
+    }
+    throw error
+  }
+  try {
+    if (!(await handle.stat()).isFile()) {
+      throw codedError('ENOTREG', 'not a regular file')
+    }
     await handle.writeFile(content, 'utf-8')
   } finally {
     await handle.close()

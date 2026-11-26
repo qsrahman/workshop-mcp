@@ -4,14 +4,13 @@ import { z } from 'zod'
 import { applyFileEdits, fileEditSchema } from '../edit.js'
 import {
   MAX_MULTI_READ_CHARS,
-  friendlyFsError,
   readText,
   tailFile,
   withFileLock,
   writeFileContent,
 } from '../files.js'
 import { validatePath } from '../paths.js'
-import { READ_ANNOTATIONS, text } from './common.js'
+import { guard, READ_ANNOTATIONS, text } from './common.js'
 
 const MAX_READ_PATHS = 50
 
@@ -20,15 +19,6 @@ const WRITE_TOOL_ANNOTATIONS = {
   readOnlyHint: false,
   destructiveHint: true,
   openWorldHint: false,
-}
-
-/** Run `fn`, naming `shown` (the path as the client wrote it) in any fs error. */
-async function guard<T>(shown: string, fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn()
-  } catch (error) {
-    throw friendlyFsError(error, shown)
-  }
 }
 
 export function registerFileTools(server: McpServer) {
@@ -85,16 +75,16 @@ export function registerFileTools(server: McpServer) {
           'Use only one of head, tail, or offset/limit, not a combination',
         )
       }
-      const file = await validatePath(args.path)
       return text(
-        await guard(args.path, () =>
-          args.tail !== undefined
+        await guard(args.path, async () => {
+          const file = await validatePath(args.path)
+          return args.tail !== undefined
             ? tailFile(file, args.tail)
             : readText(file, {
                 offset: args.offset,
                 limit: args.head ?? args.limit,
-              }),
-        ),
+              })
+        }),
       )
     },
   )
@@ -130,10 +120,10 @@ export function registerFileTools(server: McpServer) {
           continue
         }
         try {
-          const file = await validatePath(filePath)
-          const content = await guard(filePath, () =>
-            readText(file, { maxChars: remaining }),
-          )
+          const content = await guard(filePath, async () => {
+            const file = await validatePath(filePath)
+            return readText(file, { maxChars: remaining })
+          })
           remaining -= content.length
           results.push(`${filePath}:\n${content}\n`)
         } catch (error) {
@@ -165,10 +155,10 @@ export function registerFileTools(server: McpServer) {
       },
     },
     async (args) => {
-      const file = await validatePath(args.path)
-      await guard(args.path, () =>
-        withFileLock(file, () => writeFileContent(file, args.content)),
-      )
+      await guard(args.path, async () => {
+        const file = await validatePath(args.path)
+        await withFileLock(file, () => writeFileContent(file, args.content))
+      })
       return text(`Successfully wrote to ${args.path}`)
     },
   )
@@ -203,13 +193,13 @@ export function registerFileTools(server: McpServer) {
       },
     },
     async (args) => {
-      const file = await validatePath(args.path)
       return text(
-        await guard(args.path, () =>
-          withFileLock(file, () =>
+        await guard(args.path, async () => {
+          const file = await validatePath(args.path)
+          return withFileLock(file, () =>
             applyFileEdits(file, args.edits, args.dryRun, args.path),
-          ),
-        ),
+          )
+        }),
       )
     },
   )

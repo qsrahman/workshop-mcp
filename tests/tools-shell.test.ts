@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Client } from '@modelcontextprotocol/client'
-import { callTool, connect, dir, names } from './harness.js'
+import { callError, callTool, connect, dir, names } from './harness.js'
 
 describe('shell tool', () => {
   const callShell = (client: Client, args: Record<string, unknown>) =>
@@ -53,5 +53,15 @@ describe('shell tool', () => {
       cwd: path.join(dir, 'no-such-dir'),
     })
     expect(missing.isError).toBe(true)
+  })
+
+  it("names the caller's cwd when a parent is not a directory", async () => {
+    await fs.writeFile(path.join(dir, 'plain'), 'x')
+    const message = await callError(await connect(), 'shell', {
+      command: 'pwd',
+      cwd: 'plain/sub',
+    })
+    expect(message).toContain('A parent of plain/sub is not a directory')
+    expect(message).not.toContain(dir)
   })
 })

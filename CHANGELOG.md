@@ -2,6 +2,22 @@
 
 Versions follow [semver](https://semver.org). Each release's notes on GitHub are taken from the matching section here, and a release tag fails to publish without one.
 
+## [Unreleased]
+
+### Security
+
+- `web_search`: a `BRAVE_API_KEY` that cannot be sent as a header, such as one with a line break in it, was quoted in full in the error returned to the model. The error no longer repeats anything from the request. This affects 0.8.0 and earlier.
+- `web_search`: when Brave answers 200 with invalid JSON, the error no longer quotes the start of the body, which could repeat part of the API key. It says only that the response was not valid JSON.
+
+### Fixed
+
+- `web_search`: when Brave cannot be reached at all, the error says so and gives the system error code, such as `ECONNREFUSED` or `ENOTFOUND`. It used to be just `fetch failed`.
+- `web_search`: when the connection drops, or the 15 second limit runs out, while Brave's response is being read, the error says so. It used to be just `terminated` or `The operation was aborted due to timeout`.
+- `fetch_url`: a UTF-16 page with a byte-order mark is returned as text. It used to be refused as binary.
+- `fetch_url`: a `<meta charset>` in `robots.txt` is ignored even when the server labels the file `text/html`, so it cannot make a Disallow rule disappear.
+- Errors found while resolving a path name it as the caller wrote it, in the file tools and for the shell's `cwd`: "A parent of … is not a directory", "… goes through a broken symlink (its target does not exist)" and "Too many symbolic links (do they form a loop?): …". They used to show the resolved path in the system's own wording.
+- `write_file` and `edit_file`: a pipe or symlink swapped in while the file is being written can neither hang the call nor be written to.
+
 ## [0.8.0] - 2026-11-25
 
 ### Changed (breaking)

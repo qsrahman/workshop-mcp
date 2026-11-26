@@ -21,7 +21,7 @@ class FetchFailure extends Error {
   override name = 'FetchFailure'
 }
 
-export const DEFAULT_FETCH_TIMEOUT_MS = 30_000
+const DEFAULT_FETCH_TIMEOUT_MS = 30_000
 export const DEFAULT_MAX_LENGTH = 20_000
 const MAX_MAX_LENGTH = 100_000
 
@@ -111,8 +111,19 @@ const ENCODING_BY_BOM: Array<[number[], string]> = [
 const CHARSET_REGEX = /charset\s*=\s*["']?([^"';\s]+)/i
 const META_CHARSET_REGEX = /<meta[^>]+charset\s*=\s*["']?([\w:.-]+)/i
 
-/** The page's text: by byte-order mark, then the header's charset, then a <meta> tag (HTML only), else UTF-8. */
-export function decodeBody(contentType: string, body: Buffer): string {
+// A UTF-16 body contains NUL bytes, but its byte-order mark says it is text.
+// FF FE followed by two NULs is the UTF-32LE mark instead, which TextDecoder
+// does not decode.
+const hasUtf16Bom = (body: Buffer) =>
+  (body[0] === 0xfe && body[1] === 0xff) ||
+  (body[0] === 0xff && body[1] === 0xfe && (body[2] !== 0 || body[3] !== 0))
+
+/** The body's text: by byte-order mark, then the header's charset, then a <meta> tag (HTML only), else UTF-8. */
+export function decodeBody(
+  contentType: string,
+  body: Buffer,
+  allowMetaCharset = true,
+): string {
   let label = ENCODING_BY_BOM.find(([bom]) =>
     bom.every((byte, i) => body[i] === byte),
   )?.[1]
@@ -121,7 +132,7 @@ export function decodeBody(contentType: string, body: Buffer): string {
     label = CHARSET_REGEX.exec(contentType)?.[1]
   }
 
-  if (!label && /html/i.test(contentType || 'html')) {
+  if (!label && allowMetaCharset && /html/i.test(contentType || 'html')) {
     const head = body.subarray(0, 2048).toString('latin1')
     label = META_CHARSET_REGEX.exec(head)?.[1]
   }
@@ -321,9 +332,11 @@ export function createWebFetcher(options: WebFetcherOptions) {
     if (status >= 400) return
     const rules = robotsParser(
       robotsUrl,
+      // robots.txt is plain text: a <meta> in a comment is not a declaration.
       decodeBody(
         String(response.headers['content-type'] ?? 'text/plain'),
         response.body,
+        false,
       ),
     )
     const allowed =
@@ -365,7 +378,8 @@ export function createWebFetcher(options: WebFetcherOptions) {
     const contentType = String(response.headers['content-type'] ?? '')
     const mime = contentType.split(';')[0].trim().toLowerCase()
     // Text is what a model can use; images, PDFs and archives are a dead end for it.
-    if (BINARY_TYPE.test(mime) || response.body.subarray(0, 8192).includes(0)) {
+    const head = response.body.subarray(0, 8192)
+    if (BINARY_TYPE.test(mime) || (head.includes(0) && !hasUtf16Bom(head))) {
       throw new FetchFailure(
         `${finalUrl} is ${mime ? `a ${mime} file` : 'binary content'}, not text; this tool returns text only`,
       )

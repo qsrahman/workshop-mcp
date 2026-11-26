@@ -30,7 +30,7 @@ describe('web fetching', () => {
   let server: Server
   let base: string
   let requests: Array<{ path: string; headers: IncomingHttpHeaders }>
-  let robots: { status: number; body: string } | 'destroy'
+  let robots: { status: number; body: string; contentType?: string } | 'destroy'
 
   beforeAll(async () => {
     server = createServer((req, res) => {
@@ -43,7 +43,11 @@ describe('web fetching', () => {
       ) => res.writeHead(status, type ? { 'content-type': type } : {}).end(body)
       if (path === '/robots.txt') {
         if (robots === 'destroy') return void res.destroy()
-        return send(robots.status, 'text/plain', robots.body)
+        return send(
+          robots.status,
+          robots.contentType ?? 'text/plain',
+          robots.body,
+        )
       }
       if (path === '/article') send(200, 'text/html; charset=utf-8', article)
       else if (path === '/bare')
@@ -60,6 +64,21 @@ describe('web fetching', () => {
         )
       else if (path === '/json') send(200, 'application/json', '{"a":1}')
       else if (path === '/plain') send(200, 'text/plain', 'just text')
+      else if (path === '/utf16')
+        send(
+          200,
+          'text/plain; charset=utf-16le',
+          Buffer.concat([
+            Buffer.from([0xff, 0xfe]),
+            Buffer.from('utf sixteen', 'utf16le'),
+          ]),
+        )
+      else if (path === '/utf32')
+        send(
+          200,
+          'text/plain',
+          Buffer.from([0xff, 0xfe, 0, 0, 0x68, 0, 0, 0, 0x69, 0, 0, 0]),
+        )
       else if (path === '/png')
         send(200, 'image/png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0]))
       else if (path === '/nul-no-type')
@@ -94,6 +113,12 @@ describe('web fetching', () => {
           200,
           'text/html',
           '<html><head><title>Links</title></head><body><div style="display:none"><a href="/docs/more">the docs</a><img src="/img/logo.png" alt="logo"></div></body></html>',
+        )
+      else if (path === '/fallback-odd')
+        send(
+          200,
+          'text/html',
+          '<html><head><title>Odd</title></head><body><div style="display:none"><a href="">empty</a> <a href="http://[bad">broken</a> <img src="" alt="none"> <a href="/docs/more">the docs</a></div></body></html>',
         )
       else if (path === '/empty-html') send(200, 'text/html', '')
       else if (path === '/deep')
@@ -175,6 +200,14 @@ describe('web fetching', () => {
     it('makes images absolute on the whole-body fallback too', async () => {
       const page = await fetcher().fetch(`${base}/fallback`)
       expect(page.text).toContain(`![logo](${base}/img/logo.png)`)
+    })
+
+    it('leaves an empty or unparseable URL as written on the fallback, and carries on with the rest', async () => {
+      const page = await fetcher().fetch(`${base}/fallback-odd`)
+      expect(page.text).toContain('empty')
+      expect(page.text).toContain('broken')
+      // the link after the two odd ones is still made absolute
+      expect(page.text).toContain(`[the docs](${base}/docs/more)`)
     })
 
     it('explains HTML with no document element', async () => {
@@ -313,6 +346,18 @@ describe('web fetching', () => {
       ).toBe('hi')
     })
 
+    // FF FE 00 00 starts like UTF-16LE but is the UTF-32LE mark, which cannot
+    // be decoded here.
+    it('does not take a UTF-32 body for UTF-16 text', async () => {
+      expect(await failure(fetcher().fetch(`${base}/utf32`))).toContain(
+        'not text',
+      )
+    })
+
+    it('returns a UTF-16 page with a byte-order mark as text', async () => {
+      expect((await fetcher().fetch(`${base}/utf16`)).text).toBe('utf sixteen')
+    })
+
     it('falls back to UTF-8 for an unknown charset label', () => {
       expect(
         decodeBody('text/plain; charset=no-such-charset', Buffer.from('héllo')),
@@ -418,6 +463,17 @@ describe('web fetching', () => {
     // declaration, and must not make the rules decode as another encoding.
     it('reads the rules as text, whatever a comment in them says about a charset', async () => {
       disallow('User-agent: *\nDisallow: /private\n# <meta charset=utf-16le>\n')
+      const message = await failure(fetcher().fetch(`${base}/private/page`))
+      expect(message).toContain('does not allow automated fetching')
+      expect(paths()).toEqual([])
+    })
+
+    it('ignores a meta charset in robots.txt even when it is labelled text/html', async () => {
+      robots = {
+        status: 200,
+        contentType: 'text/html',
+        body: 'User-agent: *\nDisallow: /private\n# <meta charset=utf-16le>\n',
+      }
       const message = await failure(fetcher().fetch(`${base}/private/page`))
       expect(message).toContain('does not allow automated fetching')
       expect(paths()).toEqual([])

@@ -72,7 +72,7 @@ Nothing restricts what the file tools and the shell can reach, and the README sa
 
 - Every tool handler calls `validatePath(path)` before touching the filesystem and uses the path it returns. It resolves symlinks to the real file, expands `~`, resolves relative paths against the working directory, refuses a NUL byte, and names a broken symlink.
 - `validatePath` returns the nearest existing ancestor's real path plus the missing names; `writeFileContent` creates those directories. Do not create directories from any other path than one `validatePath` returned.
-- Never write through a symlink: new files use exclusive create (`wx`), existing ones must be regular files and are opened with `O_NOFOLLOW`. Reads open with `O_NOFOLLOW` too (`ELOOP`).
+- Never write through a symlink: new files use exclusive create (`wx`), existing ones must be regular files and are opened with `O_NOFOLLOW`. Reads open with `O_NOFOLLOW` too (`ESYMLINK`); a symlink loop found while resolving a path stays `ELOOP`.
 - Add a test in `tests/` for any change to path resolution or write behaviour, including a failing case such as a symlink.
 
 The `shell` tool is unconfined by design and is always served, so `readOnlyHint` is `false` on it and its description must keep saying the command can do anything the server can. The README must keep saying plainly that the server has no sandbox.
@@ -89,7 +89,7 @@ Known gaps (do not claim otherwise in docs): no Windows/WSL path handling, and n
 - History: first published as `@qsrahman/fs-mcp-server` (0.1.0 and 0.2.0), renamed when the web tools arrived. That package is deprecated and its trusted-publisher entry is obsolete; do not reuse the name.
 - The `bin` entry works through npm's symlink because `index.ts` compares real paths before running `main()`. Keep that guard.
 
-`.github/workflows/ci.yml` runs `pnpm validate` (which builds) on pushes to `main` and on pull requests (Node 22 and 24).
+`.github/workflows/ci.yml` runs `pnpm validate` (which builds) on pushes to `main` and on pull requests (Node 22, 24 and 26).
 
 ### Releasing (GitHub Actions)
 
@@ -101,7 +101,7 @@ To release:
 
 1. Bump `version` in `package.json` and add a `## [X.Y.Z] - date` section to `CHANGELOG.md` (the release fails without one), run `pnpm validate`, commit to `main` and push.
 2. `git tag vX.Y.Z && git push origin vX.Y.Z`. The tag must match `package.json` and point at a commit on `main`, or `verify` fails.
-3. Watch the run: `gh run watch`. A manual run (`gh workflow run release.yml`) rehearses everything except the upload; on an already-released version it only prints a notice, because npm refuses to republish a version even for `--dry-run`.
+3. Watch the run: `gh run watch`. A manual run (`gh workflow run release.yml`) rehearses the publish step but skips the tag/changelog checks and the later smoke and release jobs; on an already-released version it only prints a notice, because npm refuses to republish a version even for `--dry-run`.
 
 Things to know: `repository.url` in `package.json` must match the GitHub repository exactly, or npm rejects the OIDC token; the publish uses `npm` (not `pnpm`) on a tarball from a directory with no `package.json`, because `devEngines` makes `npm` fail inside this repo; provenance is attached automatically. If trusted publishing stops working, `pnpm publish` with a granular token still works as a fallback.
 

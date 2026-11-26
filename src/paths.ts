@@ -84,7 +84,10 @@ export async function validatePath(requested: string): Promise<string> {
       return null
     })
     if (stats?.isSymbolicLink()) {
-      throw new Error(`Broken symlink (its target does not exist): ${existing}`)
+      throw Object.assign(
+        new Error(`Broken symlink (its target does not exist): ${existing}`),
+        { code: 'EBROKENLINK' },
+      )
     }
     missing.unshift(path.basename(existing))
     existing = path.dirname(existing)
