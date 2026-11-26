@@ -387,7 +387,8 @@ export async function applyFileEdits(
     // replacement does not gain a blank line either.
     if (oldLines.length > 1 && oldLines.at(-1) === '') {
       oldLines.pop()
-      if (newLines.length > 1 && newLines.at(-1) === '') newLines.pop()
+      // An empty newText leaves no lines at all, so the matched ones are removed.
+      if (newLines.at(-1) === '') newLines.pop()
     }
     const lines = modified.split('\n')
     const starts = lineMatches(lines, oldLines)

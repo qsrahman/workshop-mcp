@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "node_modules/.bin/vitest run --config vitest.mutation.config.ts --bail 1 --maxWorkers 2"
+  },
+  "coverageAnalysis": "off",
+  "concurrency": 7,
+  "tsconfigFile": "tsconfig.not-used.json",
+  "mutate": ["src/net.ts", "src/edit.ts", "src/paths.ts"],
+  "incremental": true,
+  "reporters": ["clear-text", "progress", "html", "json"],
+  "ignorePatterns": ["dist", "coverage", "reports"]
+}

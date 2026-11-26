@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { createServer as createTcpServer, type AddressInfo } from 'node:net'
 import zlib from 'node:zlib'
 import {
   afterAll,
@@ -135,6 +135,67 @@ describe('the host allowlist', () => {
   })
 })
 
+// IPv6 forms that carry an IPv4 address are judged by that address. One that
+// differs from such a form in any single group is just an IPv6 address, outside
+// the public range, whatever its last two groups say.
+describe('isPublicAddress with an IPv4 address inside an IPv6 one', () => {
+  const forms: Array<[string, number[]]> = [
+    ['IPv4-mapped', [0, 0, 0, 0, 0, 0xffff]],
+    ['NAT64', [0x64, 0xff9b, 0, 0, 0, 0]],
+    ['IPv4-translated', [0, 0, 0, 0xffff, 0, 0]],
+  ]
+  const address = (prefix: number[], ipv4: [number, number]) =>
+    [...prefix, ...ipv4].map((group) => group.toString(16)).join(':')
+  const publicV4: [number, number] = [0x0808, 0x0808] // 8.8.8.8
+  const privateV4: [number, number] = [0x0a00, 0x0001] // 10.0.0.1
+
+  it.each(forms)(
+    '%s is public exactly when its IPv4 address is',
+    (_, prefix) => {
+      expect(isPublicAddress(address(prefix, publicV4))).toBe(true)
+      expect(isPublicAddress(address(prefix, privateV4))).toBe(false)
+    },
+  )
+
+  it.each(forms)('%s with any one group changed is refused', (_, prefix) => {
+    for (let i = 0; i < prefix.length; i++) {
+      // one off, staying within the 16 bits a group holds
+      const near = prefix.with(i, prefix[i] === 0xffff ? 0xfffe : prefix[i] + 1)
+      const text = address(near, publicV4)
+      expect(isPublicAddress(text), text).toBe(false)
+    }
+  })
+})
+
+describe('safeGet over HTTPS', () => {
+  // No certificate is needed to see how a request starts: the first byte of a
+  // TLS handshake record is 0x16, and plain HTTP would start with "G".
+  it('speaks TLS to an https: URL', async () => {
+    let first: number | undefined
+    const listener = createTcpServer((socket) => {
+      socket.once('data', (data: Buffer) => {
+        first = data[0]
+        socket.destroy()
+      })
+    })
+    await new Promise<void>((resolve) =>
+      listener.listen(0, '127.0.0.1', resolve),
+    )
+    const { port } = listener.address() as AddressInfo
+    try {
+      await expect(
+        safeGet(`https://127.0.0.1:${port}/`, {
+          timeoutMs: 5000,
+          permit: () => true,
+        }),
+      ).rejects.toThrow()
+      expect(first).toBe(0x16)
+    } finally {
+      await new Promise<void>((resolve) => listener.close(() => resolve()))
+    }
+  })
+})
+
 describe('safeGet', () => {
   let server: Server
   let base: string
@@ -186,6 +247,22 @@ describe('safeGet', () => {
         res
           .writeHead(200, { 'content-encoding': 'gzip' })
           .end(zlib.gzipSync(Buffer.alloc(MAX_RESPONSE_BYTES + 1_000_000)))
+      } else if (url === '/x-gzip') {
+        res
+          .writeHead(200, { 'content-encoding': 'x-gzip' })
+          .end(zlib.gzipSync('old name'))
+      } else if (url === '/upper-gzip') {
+        res
+          .writeHead(200, { 'content-encoding': ' GZip ' })
+          .end(zlib.gzipSync('any case'))
+      } else if (url === '/empty-encoding') {
+        res.writeHead(200, { 'content-encoding': '' }).end('as it is')
+      } else if (url === '/redirect-held') {
+        res.writeHead(302, { location: '/ok' })
+        res.write('x') // no end: the client must close the connection itself
+      } else if (url === '/missing-held') {
+        res.writeHead(404)
+        res.write('x')
       } else if (url === '/br') {
         res.writeHead(200, { 'content-encoding': 'br' }).end('x')
       } else if (url === '/br-held') {
@@ -236,6 +313,38 @@ describe('safeGet', () => {
         error ? reject(error) : resolve(count),
       ),
     )
+
+  describe('connections it does not read', () => {
+    it.each(['/redirect-held', '/missing-held'])(
+      'closes the connection of %s instead of leaving it open',
+      async (path) => {
+        const before = await connections()
+        await get(path)
+        await vi.waitFor(async () => expect(await connections()).toBe(before), {
+          timeout: 2000,
+        })
+      },
+    )
+
+    it('decodes x-gzip, and takes an empty content encoding as none', async () => {
+      expect((await get('/x-gzip')).body.toString()).toBe('old name')
+      expect((await get('/upper-gzip')).body.toString()).toBe('any case')
+      expect((await get('/empty-encoding')).body.toString()).toBe('as it is')
+    })
+
+    it.each(['user', ':password', 'user:password'])(
+      'refuses a URL carrying "%s" before connecting',
+      async (credentials) => {
+        const url = base.replace('//', `//${credentials}@`)
+        expect(
+          await failure(
+            safeGet(`${url}/ok`, { timeoutMs: 5000, permit: open }),
+          ),
+        ).toContain('user name or password')
+        expect(seen).toEqual([])
+      },
+    )
+  })
 
   describe('fetching', () => {
     it('returns the status, headers and body', async () => {

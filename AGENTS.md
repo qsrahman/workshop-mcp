@@ -31,6 +31,7 @@ Use pnpm (the repo pins it via `devEngines`; plain npm refuses to run).
 - `pnpm typecheck`: type-check `src/` and `tests/` (via `tsconfig.test.json`)
 - `pnpm test`: run vitest
 - `pnpm test:coverage`: vitest with v8 coverage; fails below the floor in `vitest.config.ts` (CI runs it). `index.ts` `main()` shows as uncovered because `cli.test.ts` runs it in a child process.
+- `pnpm test:mutation`: StrykerJS mutation testing of the files listed in `stryker.config.json` (a few minutes; not part of CI). It uses the command runner because the Vitest runner's worker threads cannot `process.chdir`, which `tests/harness.ts` needs, and names a `tsconfigFile` that does not exist to skip a step that fails with TypeScript 7. Reports go to `reports/`.
 - `pnpm format`: prettier (no semicolons, single quotes, trailing commas)
 
 Before finishing a change, run `pnpm validate` (build, typecheck, test, format check). It builds first because `tests/cli.test.ts` runs the built `dist/index.js` as a separate process, the way a client does.

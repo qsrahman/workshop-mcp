@@ -415,3 +415,63 @@ describe('whitespace-tolerant matching and reindenting', () => {
     ).toBe('if (x) {\n    b()\n}\n')
   })
 })
+
+// Cases that mutation testing showed no test looked at.
+describe('whole-line matching at the edges', () => {
+  const apply = async (
+    content: string,
+    oldText: string,
+    newText: string,
+    replaceAll = false,
+  ) => {
+    const f = path.join(root, 'edge.txt')
+    await fs.writeFile(f, content)
+    await applyFileEdits(f, [{ oldText, newText, replaceAll }])
+    return fs.readFile(f, 'utf-8')
+  }
+
+  it('keeps every new line when only oldText ends with a newline', async () => {
+    const content = '  foo\n  bar\n  baz\n'
+    expect(await apply(content, 'foo\nbar\n', 'x\ny')).toBe('  x\n  y\n  baz\n')
+    expect(await apply(content, 'bar\nbaz\n', 'x\ny\nz')).toBe(
+      '  foo\n  x\n  y\n  z\n',
+    )
+  })
+
+  // The same result whether the file's indentation matches oldText or not.
+  it('removes the lines when newText is empty and oldText ends with a newline', async () => {
+    expect(await apply('foo\nbar\nbaz\n', 'foo\nbar\n', '')).toBe('baz\n')
+    expect(await apply('  foo\n  bar\n  baz\n', 'foo\nbar\n', '')).toBe(
+      '  baz\n',
+    )
+    // trailing spaces in the file, so these are matched as whole lines
+    expect(await apply('  a\n  foo  \n  b\n  foo  \n', 'foo\n', '', true)).toBe(
+      '  a\n  b\n',
+    )
+    expect(await apply('  foo\n  bar\n', 'foo\nbar\n', '')).toBe('')
+  })
+
+  it('leaves one blank line when newText is just a newline, or oldText has none', async () => {
+    const content = '  foo\n  bar\n  baz\n'
+    expect(await apply(content, 'foo\nbar\n', '\n')).toBe('\n  baz\n')
+    expect(await apply(content, 'foo\nbar', '')).toBe('\n  baz\n')
+  })
+
+  it('matches the last lines of a file that has no final newline', async () => {
+    expect(await apply('  a\n  foo\n  bar', 'foo\nbar', 'x')).toBe('  a\n  x')
+  })
+
+  it('replaces matches that follow one another with replaceAll', async () => {
+    expect(await apply('  a\n  b\n  a\n  b\n', 'a\nb', 'x', true)).toBe(
+      '  x\n  x\n',
+    )
+    // runs that would overlap are matched one after the other, not twice
+    expect(await apply('  a\n  a\n  a\n', 'a\na', 'x', true)).toBe('  x\n  a\n')
+  })
+
+  it('writes the more common line ending, and LF on a tie', async () => {
+    expect(await apply('a\r\nb\n', 'a', 'x')).toBe('x\nb\n')
+    expect(await apply('a\r\nb\r\nc\n', 'a', 'x')).toBe('x\r\nb\r\nc\r\n')
+    expect(await apply('a\r\nb\nc\n', 'a', 'x')).toBe('x\nb\nc\n')
+  })
+})
